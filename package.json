@@ -1,0 +1,31 @@
+{
+  "name": "cc-session-mgr",
+  "version": "0.1.0",
+  "description": "CLI tool to analyze Claude Code session data and generate daily/weekly/project reports",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "session-mgr": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.ts\""
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^15.0.0",
+    "glob": "^13.0.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.6"
+  }
+}
