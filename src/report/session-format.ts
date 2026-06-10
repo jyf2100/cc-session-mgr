@@ -1,5 +1,6 @@
 import type { SessionSummary, SessionWorkSummary } from "../types/index.js";
 import { formatCostWithTokens } from "./format.js";
+import { toDateStr } from "../cli/tz-utils.js";
 
 /**
  * Format a session ID to its short form (first 8 characters).
@@ -13,7 +14,7 @@ function shortId(sessionId: string): string {
  */
 function formatDate(iso: string | null): string {
   if (!iso) return "N/A";
-  return iso.slice(0, 10);
+  return toDateStr(iso) ?? "N/A";
 }
 
 /**

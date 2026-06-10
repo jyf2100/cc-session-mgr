@@ -84,6 +84,24 @@ const THINKING_PATTERNS = [
 ];
 
 /**
+ * Meta-narrative keywords — when several of these appear in the output,
+ * the model is talking to itself rather than producing a summary.
+ * Each is a regex that matches anywhere in the text.
+ */
+const META_NARRATIVE_MARKERS = [
+  /\bi\s+need\s+to\b/i,
+  /\bi\s+should\b/i,
+  /\bwait[,.]?\b/i,
+  /\bhm+m+[,.]?\b/i,
+  /\blet\s+me\s+(?:check|think|look|analyze|review|re-?read|see)/i,
+  /\blooking\s+back\b/i,
+  /\bbut\s+(?:looking|the)\b/i,
+  /\bmaybe\s+(?:the|user|i|it)/i,
+  /\bso\s+the\s+(?:main|key|primary|outcome|result)\b/i,
+  /\bi\s+(?:have\s+to|must|will)\s+(?:mention|include|provide|write|produce)\b/i,
+];
+
+/**
  * Lines that look like actual summary conclusions (not thinking).
  * A good summary starts with a verb or subject, describing what was done.
  */
@@ -105,6 +123,14 @@ const CONCLUSION_STARTS = [
 export function cleanLlmOutput(raw: string): string | null {
   const text = raw.trim();
   if (!text) return null;
+
+  // Meta-narrative density check: if the output contains multiple self-talk
+  // markers, the model is narrating its thinking process — reject entirely.
+  const metaCount = META_NARRATIVE_MARKERS.reduce(
+    (acc, re) => acc + (re.test(text) ? 1 : 0),
+    0,
+  );
+  if (metaCount >= 3) return null;
 
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
 

@@ -1,4 +1,6 @@
 export { buildSessionSummaries } from "./build-summaries.js";
+export { buildDayIndexedSummaries } from "./build-day-indexed.js";
+export { splitSessionByDay } from "./day-splitter.js";
 export { aggregateByDate } from "./by-date.js";
 export { aggregateByWeek } from "./by-week.js";
 export { aggregateByProject } from "./by-project.js";
@@ -6,4 +8,4 @@ export { mergeCostData } from "./merge-cost.js";
 export { extractFileEditSummary } from "./file-edits.js";
 export { buildWorkSummaries } from "./work-summaries.js";
 export { aggregateWorkByDate } from "./work-by-date.js";
-export { aggregateWorkByWeek } from "./work-by-week.js";
+export { aggregateWorkByWeek, aggregateWorkByProject } from "./work-by-week.js";

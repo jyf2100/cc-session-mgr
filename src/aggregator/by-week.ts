@@ -1,19 +1,23 @@
-import type { SessionSummary, WeekGroup, DateGroup } from "../types/index.js";
+import type { WeekGroup, DateGroup, DayIndexedSession } from "../types/index.js";
 import { aggregateByDate } from "./by-date.js";
+import { getISOWeekForDate } from "../cli/tz-utils.js";
 
 /**
  * Group sessions by ISO week (Monday–Sunday) and compute per-week statistics.
+ *
+ * Session counts are deduplicated: a session appearing in multiple days
+ * within the same week is counted only once.
  */
 export function aggregateByWeek(
-  summaries: SessionSummary[],
+  indexed: DayIndexedSession[],
   weekRange?: { year: number; week: number },
 ): WeekGroup[] {
   // Get daily groups first, then bucket into weeks
-  const dailyGroups = aggregateByDate(summaries);
+  const dailyGroups = aggregateByDate(indexed);
   const weekMap = new Map<string, DateGroup[]>();
 
   for (const day of dailyGroups) {
-    const { year, week } = getISOWeek(day.date);
+    const { year, week } = getISOWeekForDate(day.date);
     const key = `${year}-W${String(week).padStart(2, "0")}`;
 
     if (weekRange && (year !== weekRange.year || week !== weekRange.week)) {
@@ -35,7 +39,15 @@ function buildWeekGroup(weekLabel: string, days: DateGroup[]): WeekGroup {
   const startDate = days.length > 0 ? days[0].date : weekLabel;
   const endDate = days.length > 0 ? days[days.length - 1].date : weekLabel;
 
-  const totalSessions = days.reduce((sum, d) => sum + d.sessions.length, 0);
+  // Deduplicate: a session can appear in multiple days within a week
+  const uniqueSessionIds = new Set<string>();
+  for (const d of days) {
+    for (const s of d.sessions) {
+      uniqueSessionIds.add(s.sessionId);
+    }
+  }
+  const totalSessions = uniqueSessionIds.size;
+
   const totalMessages = days.reduce((sum, d) => sum + d.totalMessages, 0);
   const totalCost = days.reduce((sum, d) => sum + d.totalCost, 0);
 
@@ -56,21 +68,4 @@ function buildWeekGroup(weekLabel: string, days: DateGroup[]): WeekGroup {
     totalCost: Math.round(totalCost * 100) / 100,
     models,
   };
-}
-
-/**
- * Get ISO week number and year for a date string (YYYY-MM-DD).
- * Uses the standard nearest-Thursday algorithm.
- */
-function getISOWeek(dateStr: string): { year: number; week: number } {
-  const d = new Date(dateStr + "T00:00:00Z");
-  // ISO day of week: Mon=1, Tue=2, ..., Sun=7
-  const dayNum = d.getUTCDay() || 7;
-  // Set to nearest Thursday (the ISO year's defining day)
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const week = Math.ceil(
-    ((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
-  );
-  return { year: d.getUTCFullYear(), week };
 }

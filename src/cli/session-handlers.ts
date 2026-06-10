@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { buildSessionSummaries } from "../aggregator/build-summaries.js";
 import { mergeCostData } from "../aggregator/merge-cost.js";
 import { formatSessionList, formatSessionDetail } from "../report/session-format.js";
+import { toDateStr } from "./tz-utils.js";
 import { writeReport } from "../report/output.js";
 import type { SessionSummary } from "../types/index.js";
 
@@ -46,13 +47,13 @@ function filterSessions(
 
   if (opts.from) {
     filtered = filtered.filter(
-      (s) => s.startTime !== null && s.startTime.slice(0, 10) >= opts.from!,
+      (s) => s.startTime !== null && toDateStr(s.startTime)! >= opts.from!,
     );
   }
 
   if (opts.to) {
     filtered = filtered.filter(
-      (s) => s.startTime !== null && s.startTime.slice(0, 10) <= opts.to!,
+      (s) => s.startTime !== null && toDateStr(s.startTime)! <= opts.to!,
     );
   }
 

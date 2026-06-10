@@ -6,3 +6,9 @@ export { formatSessionRow, formatSessionList, formatSessionDetail } from "./sess
 export { writeReport } from "./output.js";
 export { generateWorkDailyReport } from "./work-daily.js";
 export { generateWorkWeeklyReport } from "./work-weekly.js";
+export {
+  buildWorkDailyMarkdown,
+  buildWorkWeeklyMarkdown,
+  type PipelineOptions,
+  type PipelineResult,
+} from "./pipeline.js";

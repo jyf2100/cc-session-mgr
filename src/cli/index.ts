@@ -4,25 +4,24 @@ import { Command, type OptionValues } from "commander";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { buildSessionSummaries } from "../aggregator/build-summaries.js";
+import { buildDayIndexedSummaries } from "../aggregator/build-day-indexed.js";
 import { mergeCostData } from "../aggregator/merge-cost.js";
 import { aggregateByDate } from "../aggregator/by-date.js";
 import { aggregateByWeek } from "../aggregator/by-week.js";
 import { aggregateByProject } from "../aggregator/by-project.js";
 import { buildWorkSummaries } from "../aggregator/work-summaries.js";
-import { aggregateWorkByDate } from "../aggregator/work-by-date.js";
-import { aggregateWorkByWeek } from "../aggregator/work-by-week.js";
+import { buildDayIndexedWorkSummaries } from "../aggregator/build-day-indexed-work.js";
 import { generateDailyReport } from "../report/daily.js";
 import { generateWeeklyReport } from "../report/weekly.js";
 import { generateProjectReport } from "../report/project-report.js";
-import { generateWorkDailyReport } from "../report/work-daily.js";
-import { generateWorkWeeklyReport } from "../report/work-weekly.js";
 import { writeReport } from "../report/output.js";
+import { buildWorkDailyMarkdown, buildWorkWeeklyMarkdown } from "../report/pipeline.js";
 import { todayStr, parseWeekArg, getISOWeek } from "./helpers.js";
+import { setTimezone } from "./tz-utils.js";
 import { runList, runShow } from "./session-handlers.js";
 import { startServer } from "../web/index.js";
 import {
   detectProvider,
-  summarizeSessions,
 } from "../summarize/index.js";
 import type { SummarizeOptions } from "../summarize/index.js";
 import type {
@@ -91,26 +90,6 @@ async function resolveSummarizeOptions(
   return detected ?? null;
 }
 
-/**
- * Run LLM summarization on work summaries if options are configured.
- */
-async function maybeSummarize(
-  summaries: SessionWorkSummary[],
-  flags: LlmFlags,
-): Promise<void> {
-  const options = await resolveSummarizeOptions(flags);
-  if (!options) return;
-
-  const flat = summaries;
-  if (flat.length === 0) return;
-
-  process.stderr.write(
-    `Summarizing ${flat.length} session(s) with ${options.provider} (${options.config.model})...\n`,
-  );
-  await summarizeSessions(flat, options);
-  process.stderr.write("Summarization complete.\n");
-}
-
 function resolveClaudeDir(opts: OptionValues): string {
   const explicit = opts.claudeDir as string | undefined;
   if (explicit) return explicit;
@@ -128,10 +107,15 @@ async function runDaily(
   const claudeDir = resolveClaudeDir(opts);
   const date = dateArg ?? todayStr();
 
-  const summaries = await buildSessionSummaries(claudeDir);
+  const indexed = await buildDayIndexedSummaries(claudeDir);
+  const summaries = indexed.map((i) => i.summary);
   const enriched = await mergeCostData(summaries, claudeDir);
+  const enrichedIndexed = indexed.map((item, i) => ({
+    ...item,
+    summary: enriched[i],
+  }));
 
-  const dateGroups = aggregateByDate(enriched, { start: date, end: date });
+  const dateGroups = aggregateByDate(enrichedIndexed, { start: date, end: date });
   const dayGroup = dateGroups.length > 0 ? dateGroups[0] : null;
 
   const projectGroups = aggregateByProject(enriched);
@@ -204,16 +188,20 @@ async function runWeekly(
     year = parsed.year;
     week = parsed.week;
   } else {
-    const now = new Date();
-    const iso = getISOWeek(now);
+    const iso = getISOWeek();
     year = iso.year;
     week = iso.week;
   }
 
-  const summaries = await buildSessionSummaries(claudeDir);
+  const indexed = await buildDayIndexedSummaries(claudeDir);
+  const summaries = indexed.map((i) => i.summary);
   const enriched = await mergeCostData(summaries, claudeDir);
+  const enrichedIndexed = indexed.map((item, i) => ({
+    ...item,
+    summary: enriched[i],
+  }));
 
-  const weekGroups = aggregateByWeek(enriched, { year, week });
+  const weekGroups = aggregateByWeek(enrichedIndexed, { year, week });
 
   if (weekGroups.length === 0) {
     const weekLabel = `${year}-W${String(week).padStart(2, "0")}`;
@@ -334,25 +322,20 @@ async function runWorkDaily(
   const claudeDir = resolveClaudeDir(globalOpts);
   const date = dateArg ?? todayStr();
 
-  const summaries = await buildWorkSummaries(claudeDir);
-
-  // Aggregate FIRST — filter to the target date range before summarizing.
-  // This avoids wasting LLM calls on sessions outside the report scope.
-  const dailyData = aggregateWorkByDate(summaries, { start: date, end: date });
-  const data = dailyData.length > 0
-    ? dailyData[0]
-    : { date, projects: [], sessionCount: 0 };
-
-  // Only summarize sessions that will actually appear in the report
-  const reportSessions = data.projects.flatMap((p) => p.sessions);
-  await maybeSummarize(reportSessions, {
+  const indexed = await buildDayIndexedWorkSummaries(claudeDir);
+  const summarizeOptions = await resolveSummarizeOptions({
     llm: cmdOpts?.llm,
     llmModel: cmdOpts?.llmModel,
     llmBaseUrl: cmdOpts?.llmBaseUrl,
     noLlm: cmdOpts?.noLlm,
   });
 
-  const markdown = generateWorkDailyReport(data);
+  const result = await buildWorkDailyMarkdown(indexed, date, {
+    summarizeOptions,
+    claudeDir,
+  });
+
+  const markdown = result?.markdown ?? `# 工作日报: ${date}\n\nNo work sessions found for ${date}.\n`;
   await writeReport(markdown, globalOpts.output as string | undefined);
 }
 
@@ -384,20 +367,25 @@ async function runWorkWeekly(
     year = parsed.year;
     week = parsed.week;
   } else {
-    const now = new Date();
-    const iso = getISOWeek(now);
+    const iso = getISOWeek();
     year = iso.year;
     week = iso.week;
   }
 
-  const summaries = await buildWorkSummaries(claudeDir);
+  const indexed = await buildDayIndexedWorkSummaries(claudeDir);
+  const summarizeOptions = await resolveSummarizeOptions({
+    llm: cmdOpts?.llm,
+    llmModel: cmdOpts?.llmModel,
+    llmBaseUrl: cmdOpts?.llmBaseUrl,
+    noLlm: cmdOpts?.noLlm,
+  });
 
-  // Aggregate FIRST — filter to the target week before summarizing.
-  // This avoids wasting LLM calls on sessions outside the report scope.
-  const dailyData = aggregateWorkByDate(summaries);
-  const weekData = aggregateWorkByWeek(dailyData, { year, week });
+  const result = await buildWorkWeeklyMarkdown(indexed, year, week, {
+    summarizeOptions,
+    claudeDir,
+  });
 
-  if (weekData.length === 0) {
+  if (!result) {
     const weekLabel = `${year}-W${String(week).padStart(2, "0")}`;
     await writeReport(
       `# 工作周报: ${weekLabel}\n\nNo work sessions found for week ${weekLabel}.\n`,
@@ -406,19 +394,7 @@ async function runWorkWeekly(
     return;
   }
 
-  // Only summarize sessions that will actually appear in the report
-  const reportSessions = weekData[0].days.flatMap((d) =>
-    d.projects.flatMap((p) => p.sessions),
-  );
-  await maybeSummarize(reportSessions, {
-    llm: cmdOpts?.llm,
-    llmModel: cmdOpts?.llmModel,
-    llmBaseUrl: cmdOpts?.llmBaseUrl,
-    noLlm: cmdOpts?.noLlm,
-  });
-
-  const markdown = generateWorkWeeklyReport(weekData[0]);
-  await writeReport(markdown, globalOpts.output as string | undefined);
+  await writeReport(result.markdown, globalOpts.output as string | undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -432,7 +408,8 @@ program
   .description("Analyze Claude Code session data and generate reports")
   .version(VERSION)
   .option("--claude-dir <path>", "Path to ~/.claude directory")
-  .option("--output <path>", "Write report to file instead of stdout");
+  .option("--output <path>", "Write report to file instead of stdout")
+  .option("--tz <timezone>", "IANA timezone for date grouping (e.g. Asia/Shanghai, UTC)");
 
 const reportCmd = program
   .command("report")
@@ -442,18 +419,21 @@ reportCmd
   .command("daily")
   .description("Generate a daily report (defaults to today)")
   .argument("[date]", "Date in YYYY-MM-DD format", undefined)
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(runDaily);
 
 reportCmd
   .command("weekly")
   .description("Generate a weekly report (defaults to current week)")
   .argument("[week]", "Week in YYYY-WNN format (e.g. 2026-W23)", undefined)
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(runWeekly);
 
 reportCmd
   .command("project")
   .description("Generate a project analysis report")
   .argument("<name>", "Project name or path substring to match")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(runProject);
 
 reportCmd
@@ -464,6 +444,7 @@ reportCmd
   .option("--llm-model <name>", "LLM model name (required for ollama)")
   .option("--llm-base-url <url>", "LLM API base URL (overrides default)")
   .option("--no-llm", "Disable LLM summarization")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(runWorkDaily);
 
 reportCmd
@@ -474,6 +455,7 @@ reportCmd
   .option("--llm-model <name>", "LLM model name (required for ollama)")
   .option("--llm-base-url <url>", "LLM API base URL (overrides default)")
   .option("--no-llm", "Disable LLM summarization")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(runWorkWeekly);
 
 // ---------------------------------------------------------------------------
@@ -491,6 +473,7 @@ sessionCmd
   .option("--from <date>", "Filter from date (YYYY-MM-DD, inclusive)")
   .option("--to <date>", "Filter to date (YYYY-MM-DD, inclusive)")
   .option("--limit <n>", "Max sessions to show (0 = unlimited)", "20")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(async (opts) => {
     const globalOpts = program.opts();
     await runList({
@@ -507,6 +490,7 @@ sessionCmd
   .command("show")
   .description("Show details for a single session")
   .argument("<sessionId>", "Session ID (supports prefix matching)")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(async (sessionId: string) => {
     const globalOpts = program.opts();
     await runShow(sessionId, {
@@ -523,15 +507,60 @@ program
   .command("web")
   .description("Start an interactive web UI for browsing sessions")
   .option("--port <number>", "Port to listen on", "3456")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(async (opts) => {
     const globalOpts = program.opts();
     const claudeDir = resolveClaudeDir(globalOpts);
     const port = parseInt(opts.port, 10);
+    const tz = (opts.tz as string | undefined) || (globalOpts.tz as string | undefined);
 
     const summaries = await buildSessionSummaries(claudeDir);
     const enriched = await mergeCostData(summaries, claudeDir);
 
-    startServer(enriched, port, claudeDir);
+    startServer(enriched, port, claudeDir, tz);
   });
+
+// ---------------------------------------------------------------------------
+// TUI (Interactive Terminal UI)
+// ---------------------------------------------------------------------------
+
+program
+  .command("tui")
+  .description("Launch interactive terminal UI")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
+  .option("--report-dir <path>", "Directory for exported reports (default: $HOME)")
+  .option("--llm <provider>", "LLM provider: anthropic | ollama (default: auto-detect)")
+  .option("--llm-model <name>", "LLM model name (required for ollama)")
+  .option("--llm-base-url <url>", "LLM API base URL (overrides default)")
+  .option("--no-llm", "Disable LLM summarization")
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    const claudeDir = resolveClaudeDir(globalOpts);
+    const tz = (opts.tz as string | undefined) || (globalOpts.tz as string | undefined);
+    if (tz) setTimezone(tz);
+    const summarizeOptions = await resolveSummarizeOptions({
+      llm: opts.llm as string | undefined,
+      llmModel: opts.llmModel as string | undefined,
+      llmBaseUrl: opts.llmBaseUrl as string | undefined,
+      noLlm: opts.noLlm as boolean | undefined,
+    });
+    const { startTui } = await import("../tui/index.js");
+    await startTui(claudeDir, {
+      reportDir: opts.reportDir as string | undefined,
+      summarizeOptions,
+    });
+  });
+
+// Apply timezone before any action handler runs.
+// Read from the leaf action command (subcommand --tz) first,
+// fall back to the global program option (--tz before subcommand).
+program.hook("preAction", (_thisCmd, actionCmd) => {
+  const actionOpts = actionCmd.opts();
+  const globalOpts = program.opts();
+  const tz = (actionOpts.tz as string | undefined) || (globalOpts.tz as string | undefined);
+  if (tz) {
+    setTimezone(tz);
+  }
+});
 
 program.parse();

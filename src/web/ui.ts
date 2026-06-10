@@ -2,7 +2,7 @@
  * Inline HTML/CSS/JS for the session browser SPA.
  * No frameworks, no build tools — just a single HTML string.
  */
-export function getHtml(): string {
+export function getHtml(timezone?: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -241,6 +241,13 @@ a:hover { text-decoration: underline; }
 </div>
 
 <script>
+// Timezone-aware date formatting (matches server-side --tz option)
+const _tzDateFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: ${timezone ? `"${timezone}"` : "undefined"},
+  year: "numeric", month: "2-digit", day: "2-digit"
+});
+function toDate(ts) { return ts ? _tzDateFmt.format(new Date(ts)) : "N/A"; }
+
 // ---- State ----
 let currentProject = null;
 let currentSessionId = null;
@@ -291,7 +298,7 @@ async function loadProjects() {
   const el = document.getElementById('projects-list');
   el.innerHTML = projects.map(p => {
     const dateStr = p.dateRange.start
-      ? p.dateRange.start.slice(0,10) + ' ~ ' + p.dateRange.end.slice(0,10)
+      ? toDate(p.dateRange.start) + ' ~ ' + toDate(p.dateRange.end)
       : 'No dates';
     return '<div class="project-item" data-name="' + esc(p.name) + '" onclick="selectProject(\\'' + esc(p.name) + '\\')">'
       + '<div class="project-name">' + esc(p.name) + '</div>'
@@ -341,7 +348,7 @@ function renderSessions() {
     + '<th>ID</th><th>Title</th><th>Date</th><th>Msgs</th><th>Cost</th>'
     + '</tr></thead><tbody>'
     + allSessions.map(s => {
-      const date = s.startTime ? s.startTime.slice(0,10) : 'N/A';
+      const date = s.startTime ? toDate(s.startTime) : 'N/A';
       const msgs = s.messages.user + s.messages.assistant;
       const cost = formatCost(s);
       return '<tr data-id="' + esc(s.id) + '" onclick="selectSession(\\'' + esc(s.id) + '\\')">'

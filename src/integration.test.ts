@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { buildSessionSummaries } from "./aggregator/build-summaries.js";
+import { buildDayIndexedSummaries } from "./aggregator/build-day-indexed.js";
 import { mergeCostData } from "./aggregator/merge-cost.js";
 import { aggregateByDate } from "./aggregator/by-date.js";
 import { aggregateByWeek } from "./aggregator/by-week.js";
@@ -19,13 +20,18 @@ const skipIfNoData = existsSync(CLAUDE_DIR) ? describe : describe.skip;
 
 skipIfNoData("Integration: real ~/.claude data", () => {
   it("parses sessions and generates a daily report for today", async () => {
-    const summaries = await buildSessionSummaries(CLAUDE_DIR);
-    expect(summaries.length).toBeGreaterThan(0);
+    const indexed = await buildDayIndexedSummaries(CLAUDE_DIR);
+    expect(indexed.length).toBeGreaterThan(0);
 
+    const summaries = indexed.map((i) => i.summary);
     const enriched = await mergeCostData(summaries, CLAUDE_DIR);
+    const enrichedIndexed = indexed.map((item, i) => ({
+      ...item,
+      summary: enriched[i],
+    }));
 
     const today = todayStr();
-    const dateGroups = aggregateByDate(enriched, { start: today, end: today });
+    const dateGroups = aggregateByDate(enrichedIndexed, { start: today, end: today });
     const dayGroup = dateGroups.length > 0 ? dateGroups[0] : null;
 
     const projectGroups = aggregateByProject(enriched);
@@ -63,10 +69,15 @@ skipIfNoData("Integration: real ~/.claude data", () => {
   });
 
   it("generates a weekly report for the current week", async () => {
-    const summaries = await buildSessionSummaries(CLAUDE_DIR);
+    const indexed = await buildDayIndexedSummaries(CLAUDE_DIR);
+    const summaries = indexed.map((i) => i.summary);
     const enriched = await mergeCostData(summaries, CLAUDE_DIR);
+    const enrichedIndexed = indexed.map((item, i) => ({
+      ...item,
+      summary: enriched[i],
+    }));
 
-    const weekGroups = aggregateByWeek(enriched);
+    const weekGroups = aggregateByWeek(enrichedIndexed);
     expect(weekGroups.length).toBeGreaterThan(0);
 
     const latestWeek = weekGroups[weekGroups.length - 1];

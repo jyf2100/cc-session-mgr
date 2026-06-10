@@ -5,6 +5,7 @@
  * No side effects, no network calls — fully testable.
  */
 
+import { toDateStr } from "../cli/tz-utils.js";
 import type { SessionWorkSummary } from "../types/index.js";
 
 // ---------------------------------------------------------------------------
@@ -83,4 +84,52 @@ export function buildSummaryPrompt(session: SessionWorkSummary): string {
   }
 
   return `${SYSTEM_PROMPT}\n\n${sections.join("\n\n")}\n\n## Task\nSummarize what this session accomplished in 1-2 sentences:`;
+}
+
+// ---------------------------------------------------------------------------
+// Project-level weekly prompt
+// ---------------------------------------------------------------------------
+
+const PROJECT_SYSTEM_PROMPT = `You are a weekly work summarizer. Given a list of coding sessions for one project across a week, produce a concise 2-3 sentence summary describing what was accomplished for the project as a whole.
+
+Rules:
+- Write in the same language as the session data (Chinese if Chinese, English if English).
+- Focus on the overall arc and key outcomes, not individual session details.
+- Do not mention session counts or dates explicitly — summarize the work thematically.
+- Output ONLY the summary text. No meta-commentary, no thinking process, no "Let me...", "Okay...", or "The project's main focus was...".
+- Start directly with the accomplishment, e.g. "完成了..." or "Built..." or "Refactored...".`;
+
+/**
+ * Build a project-level weekly summary prompt from all sessions of that project.
+ *
+ * Each session contributes its date, summary/intent, modules touched, and
+ * file-edit count so the LLM can synthesize a cohesive weekly narrative.
+ */
+export function buildProjectWeeklyPrompt(
+  projectName: string,
+  sessions: SessionWorkSummary[],
+): string {
+  const entries = sessions
+    .filter((s) => s.startTime)
+    .sort((a, b) => a.startTime!.localeCompare(b.startTime!))
+    .map((s) => {
+      const date = toDateStr(s.startTime!) ?? "unknown"; // YYYY-MM-DD
+      const intent =
+        s.workContent.llmSummary
+        || s.workContent.compactedSummary
+        || s.workContent.primaryIntent;
+      const modules =
+        s.workContent.moduleSummary.length > 0
+          ? s.workContent.moduleSummary.join(", ")
+          : null;
+      const fileCount = s.fileEdits.length;
+      const parts = [`**${intent}**`];
+      if (modules) parts.push(modules);
+      if (fileCount > 0) parts.push(`${fileCount} file${fileCount > 1 ? "s" : ""}`);
+      return `- ${date}: ${parts.join(" — ")}`;
+    });
+
+  const projectShort = projectName.split("/").pop() || projectName;
+
+  return `${PROJECT_SYSTEM_PROMPT}\n\n## Project: ${projectShort}\n\n${entries.join("\n")}\n\n## Task\nSummarize the overall work done on this project this week in 2-3 sentences:`;
 }

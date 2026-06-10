@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type {
   WorkDailyData,
-  WorkWeeklyData,
+  WorkWeeklyReportData,
   SessionWorkSummary,
   WorkContent,
   WorkProjectDay,
@@ -166,21 +166,20 @@ describe("generateWorkDailyReport", () => {
 // ---------------------------------------------------------------------------
 
 describe("generateWorkWeeklyReport", () => {
-  it("generates multi-day weekly report", () => {
-    const data: WorkWeeklyData = {
+  it("generates project-centric weekly report", () => {
+    const data: WorkWeeklyReportData = {
       weekLabel: "2026-W24",
       startDate: "2026-06-08",
       endDate: "2026-06-12",
-      days: [
+      projects: [
         {
-          date: "2026-06-08",
-          projects: [makeProjectDay("/proj/a", [makeSession("Setup project")])],
-          sessionCount: 1,
-        },
-        {
-          date: "2026-06-10",
-          projects: [makeProjectDay("/proj/a", [makeSession("Add features", ["core (2 files)"])])],
-          sessionCount: 1,
+          projectName: "/proj/cc-session-mgr",
+          sessions: [
+            { ...makeSession("Setup project"), startTime: "2026-06-08T10:00:00Z" },
+            { ...makeSession("Add features", ["core (2 files)"]), startTime: "2026-06-10T10:00:00Z" },
+          ],
+          projectSummary: "Completed initial setup and added core features.",
+          sessionDates: new Map(),
         },
       ],
       totalSessions: 2,
@@ -191,18 +190,20 @@ describe("generateWorkWeeklyReport", () => {
     expect(report).toContain("# 工作周报: 2026-W24");
     expect(report).toContain("2026-06-08 — 2026-06-12");
     expect(report).toContain("2 个工作会话");
-    expect(report).toContain("### 2026-06-08");
-    expect(report).toContain("### 2026-06-10");
-    expect(report).toContain("- Setup project");
-    expect(report).toContain("- Add features");
+    expect(report).toContain("## cc-session-mgr (2 sessions)");
+    expect(report).toContain("Completed initial setup and added core features.");
+    expect(report).toContain("06-08");
+    expect(report).toContain("06-10");
+    expect(report).toContain("Setup project");
+    expect(report).toContain("Add features");
   });
 
   it("generates report for empty week", () => {
-    const data: WorkWeeklyData = {
+    const data: WorkWeeklyReportData = {
       weekLabel: "2026-W24",
       startDate: "2026-06-08",
       endDate: "2026-06-14",
-      days: [],
+      projects: [],
       totalSessions: 0,
     };
 
@@ -211,16 +212,45 @@ describe("generateWorkWeeklyReport", () => {
     expect(report).toContain("No work sessions found for week 2026-W24");
   });
 
-  it("handles single-day week", () => {
-    const data: WorkWeeklyData = {
-      weekLabel: "2026-W23",
-      startDate: "2026-06-07",
-      endDate: "2026-06-07",
-      days: [
+  it("handles multiple projects", () => {
+    const data: WorkWeeklyReportData = {
+      weekLabel: "2026-W24",
+      startDate: "2026-06-08",
+      endDate: "2026-06-14",
+      projects: [
         {
-          date: "2026-06-07",
-          projects: [makeProjectDay("/proj/x", [makeSession("Bugfix")])],
-          sessionCount: 1,
+          projectName: "/proj/alpha",
+          sessions: [makeSession("Fix bug")],
+          projectSummary: null,
+          sessionDates: new Map(),
+        },
+        {
+          projectName: "/proj/beta",
+          sessions: [makeSession("Add feature")],
+          projectSummary: null,
+          sessionDates: new Map(),
+        },
+      ],
+      totalSessions: 2,
+    };
+
+    const report = generateWorkWeeklyReport(data);
+
+    expect(report).toContain("## alpha (1 session)");
+    expect(report).toContain("## beta (1 session)");
+  });
+
+  it("omits projectSummary section when null", () => {
+    const data: WorkWeeklyReportData = {
+      weekLabel: "2026-W24",
+      startDate: "2026-06-08",
+      endDate: "2026-06-14",
+      projects: [
+        {
+          projectName: "/proj/x",
+          sessions: [makeSession("Quick fix")],
+          projectSummary: null,
+          sessionDates: new Map(),
         },
       ],
       totalSessions: 1,
@@ -228,23 +258,29 @@ describe("generateWorkWeeklyReport", () => {
 
     const report = generateWorkWeeklyReport(data);
 
-    expect(report).toContain("### 2026-06-07");
-    expect(report).toContain("- Bugfix");
+    expect(report).toContain("## x (1 session)");
+    // No extra text between heading and session bullets (no projectSummary)
+    const headingEndIdx = report.indexOf("## x (1 session)") + "## x (1 session)".length;
+    const bulletIdx = report.indexOf("- ");
+    const betweenText = report.slice(headingEndIdx, bulletIdx);
+    // Should only have newlines, no summary paragraph
+    expect(betweenText.replace(/\n/g, "").trim()).toBe("");
   });
 
-  it("prefers llmSummary over primaryIntent", () => {
+  it("prefers llmSummary over primaryIntent in session bullets", () => {
     const session = makeSession("Build auth module");
     session.workContent.llmSummary = "实现了认证模块的登录和会话管理功能";
 
-    const data: WorkWeeklyData = {
+    const data: WorkWeeklyReportData = {
       weekLabel: "2026-W23",
       startDate: "2026-06-07",
       endDate: "2026-06-07",
-      days: [
+      projects: [
         {
-          date: "2026-06-07",
-          projects: [makeProjectDay("/proj/x", [session])],
-          sessionCount: 1,
+          projectName: "/proj/x",
+          sessions: [session],
+          projectSummary: null,
+          sessionDates: new Map(),
         },
       ],
       totalSessions: 1,
@@ -254,5 +290,27 @@ describe("generateWorkWeeklyReport", () => {
 
     expect(report).toContain("实现了认证模块的登录和会话管理功能");
     expect(report).not.toContain("Build auth module");
+  });
+
+  it("uses short date format (MM-DD) in bullets", () => {
+    const data: WorkWeeklyReportData = {
+      weekLabel: "2026-W24",
+      startDate: "2026-06-08",
+      endDate: "2026-06-14",
+      projects: [
+        {
+          projectName: "/proj/x",
+          sessions: [{ ...makeSession("Work"), startTime: "2026-06-09T10:00:00Z" }],
+          projectSummary: null,
+          sessionDates: new Map(),
+        },
+      ],
+      totalSessions: 1,
+    };
+
+    const report = generateWorkWeeklyReport(data);
+
+    expect(report).toContain("06-09:");
+    expect(report).not.toContain("2026-06-09:");
   });
 });

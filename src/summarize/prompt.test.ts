@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { SessionWorkSummary, WorkContent } from "../types/index.js";
-import { buildSummaryPrompt } from "./prompt.js";
+import { buildSummaryPrompt, buildProjectWeeklyPrompt } from "./prompt.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -179,5 +179,114 @@ describe("buildSummaryPrompt", () => {
     const prompt = buildSummaryPrompt(session);
     expect(prompt).toContain("1-2 sentence summary");
     expect(prompt).toContain("same language");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildProjectWeeklyPrompt
+// ---------------------------------------------------------------------------
+
+describe("buildProjectWeeklyPrompt", () => {
+  it("includes project short name (last path segment)", () => {
+    const sessions = [
+      makeSession({ startTime: "2026-06-08T10:00:00Z" }),
+    ];
+    const prompt = buildProjectWeeklyPrompt("/work/my-project", sessions);
+    expect(prompt).toContain("## Project: my-project");
+    expect(prompt).not.toContain("/work/my-project");
+  });
+
+  it("lists sessions sorted by date with intent", () => {
+    const sessions = [
+      makeSession({
+        startTime: "2026-06-09T14:00:00Z",
+        workContent: makeWorkContent({ primaryIntent: "Fix tests" }),
+      }),
+      makeSession({
+        startTime: "2026-06-08T10:00:00Z",
+        workContent: makeWorkContent({ primaryIntent: "Add cache module" }),
+      }),
+    ];
+    const prompt = buildProjectWeeklyPrompt("/proj/a", sessions);
+
+    const idx08 = prompt.indexOf("2026-06-08");
+    const idx09 = prompt.indexOf("2026-06-09");
+    expect(idx08).toBeLessThan(idx09);
+    expect(prompt).toContain("Add cache module");
+    expect(prompt).toContain("Fix tests");
+  });
+
+  it("prefers llmSummary over compactedSummary over primaryIntent", () => {
+    const sessions = [
+      makeSession({
+        startTime: "2026-06-08T10:00:00Z",
+        workContent: makeWorkContent({
+          primaryIntent: "raw intent",
+          compactedSummary: "compacted version",
+          llmSummary: "LLM generated summary",
+        }),
+      }),
+    ];
+    const prompt = buildProjectWeeklyPrompt("/proj/a", sessions);
+    expect(prompt).toContain("LLM generated summary");
+    expect(prompt).not.toContain("compacted version");
+    expect(prompt).not.toContain("raw intent");
+  });
+
+  it("falls back to compactedSummary when no llmSummary", () => {
+    const sessions = [
+      makeSession({
+        startTime: "2026-06-08T10:00:00Z",
+        workContent: makeWorkContent({
+          primaryIntent: "raw intent",
+          compactedSummary: "compacted version",
+          llmSummary: null,
+        }),
+      }),
+    ];
+    const prompt = buildProjectWeeklyPrompt("/proj/a", sessions);
+    expect(prompt).toContain("compacted version");
+    expect(prompt).not.toContain("raw intent");
+  });
+
+  it("includes module summary and file count per session", () => {
+    const sessions = [
+      makeSession({
+        startTime: "2026-06-08T10:00:00Z",
+        workContent: makeWorkContent({
+          moduleSummary: ["parser (2)", "report (1)"],
+        }),
+        fileEdits: [
+          { filePath: "src/a.ts", editCount: 1 },
+          { filePath: "src/b.ts", editCount: 1 },
+        ],
+      }),
+    ];
+    const prompt = buildProjectWeeklyPrompt("/proj/a", sessions);
+    expect(prompt).toContain("parser (2), report (1)");
+    expect(prompt).toContain("2 files");
+  });
+
+  it("skips sessions with null startTime", () => {
+    const sessions = [
+      makeSession({ startTime: "2026-06-08T10:00:00Z" }),
+      { ...makeSession({ startTime: "2026-06-08T10:00:00Z" }), startTime: null },
+    ];
+    const prompt = buildProjectWeeklyPrompt("/proj/a", sessions);
+    // Only one session line should appear
+    const matches = prompt.match(/^- 2026-\d{2}-\d{2}:/gm);
+    expect(matches).toHaveLength(1);
+  });
+
+  it("ends with the weekly task instruction", () => {
+    const sessions = [makeSession({ startTime: "2026-06-08T10:00:00Z" })];
+    const prompt = buildProjectWeeklyPrompt("/proj/a", sessions);
+    expect(prompt).toContain("Summarize the overall work done on this project this week in 2-3 sentences:");
+  });
+
+  it("includes the 2-3 sentence instruction in system prompt", () => {
+    const sessions = [makeSession({ startTime: "2026-06-08T10:00:00Z" })];
+    const prompt = buildProjectWeeklyPrompt("/proj/a", sessions);
+    expect(prompt).toContain("2-3 sentence summary");
   });
 });

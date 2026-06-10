@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseWeekArg, getISOWeek, todayStr } from "./helpers.js";
+import { parseWeekArg, todayStr } from "./helpers.js";
+import { getISOWeekForDate } from "./tz-utils.js";
 
 describe("parseWeekArg", () => {
   it("parses valid YYYY-WNN format", () => {
@@ -29,22 +30,22 @@ describe("parseWeekArg", () => {
   });
 });
 
-describe("getISOWeek", () => {
+describe("getISOWeekForDate", () => {
   it("returns correct ISO week for a known date", () => {
     // 2026-01-01 is a Thursday, ISO week 1 of 2026
-    const result = getISOWeek(new Date("2026-01-01"));
+    const result = getISOWeekForDate("2026-01-01");
     expect(result.year).toBe(2026);
     expect(result.week).toBe(1);
   });
 
   it("returns week 2 for Jan 5 2026 (Monday of week 2)", () => {
-    const result = getISOWeek(new Date("2026-01-05"));
+    const result = getISOWeekForDate("2026-01-05");
     expect(result.week).toBe(2);
   });
 
   it("handles late December dates", () => {
     // 2026-12-31 is a Thursday
-    const result = getISOWeek(new Date("2026-12-31"));
+    const result = getISOWeekForDate("2026-12-31");
     expect(result.year).toBe(2026);
     expect(result.week).toBeGreaterThanOrEqual(52);
   });

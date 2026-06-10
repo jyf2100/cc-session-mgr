@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { SessionSummary } from "../types/index.js";
 import { handleProjects, handleSessions, handleSessionDetail } from "./api-handlers.js";
 import { getHtml } from "./ui.js";
+import { setTimezone } from "../cli/tz-utils.js";
 
 // ---------------------------------------------------------------------------
 // JSON response helper
@@ -108,7 +109,7 @@ async function extractMessages(
 // Request handler
 // ---------------------------------------------------------------------------
 
-function createHandler(summaries: SessionSummary[], claudeDir: string) {
+function createHandler(summaries: SessionSummary[], claudeDir: string, timezone?: string) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
     const qIdx = url.indexOf("?");
@@ -117,7 +118,7 @@ function createHandler(summaries: SessionSummary[], claudeDir: string) {
     try {
       // GET / — serve HTML page
       if (pathname === "/" || pathname === "") {
-        const html = getHtml();
+        const html = getHtml(timezone);
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Content-Length": Buffer.byteLength(html),
@@ -186,8 +187,12 @@ export function startServer(
   summaries: SessionSummary[],
   port: number,
   claudeDir: string,
+  timezone?: string,
 ): Server {
-  const server = createServer(createHandler(summaries, claudeDir));
+  if (timezone) {
+    setTimezone(timezone);
+  }
+  const server = createServer(createHandler(summaries, claudeDir, timezone));
 
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {

@@ -5,7 +5,7 @@
  * Auto-detects provider when no explicit configuration is given.
  */
 
-export { buildSummaryPrompt } from "./prompt.js";
+export { buildSummaryPrompt, buildProjectWeeklyPrompt } from "./prompt.js";
 export {
   type ProviderKind,
   type LlmProviderConfig,
@@ -14,6 +14,7 @@ export {
 export {
   summarizeSession,
   summarizeSessions,
+  summarizeProjectWeekly,
   detectProvider,
 } from "./summarize.js";
 export type { SummarizeOptions } from "./summarize.js";

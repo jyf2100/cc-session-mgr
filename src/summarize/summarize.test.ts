@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SessionWorkSummary, WorkContent } from "../types/index.js";
-import { summarizeSession, summarizeSessions } from "./summarize.js";
+import { summarizeSession, summarizeSessions, summarizeProjectWeekly } from "./summarize.js";
 import type { SummarizeOptions } from "./summarize.js";
-import { anthropicProvider, ollamaProvider } from "./providers.js";
+import { anthropicProvider, ollamaProvider, cleanLlmOutput } from "./providers.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -442,5 +442,222 @@ describe("Ollama parseResponse reasoning fallback", () => {
       ],
     };
     expect(ollamaProvider.parseResponse(body)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cache integration tests
+// ---------------------------------------------------------------------------
+
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+describe("summarizeSessions with cache", () => {
+  let cacheDir: string;
+
+  beforeEach(async () => {
+    cacheDir = join(tmpdir(), `cc-test-cache-${Date.now()}`);
+    await mkdir(cacheDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(cacheDir, { recursive: true, force: true });
+  });
+
+  it("uses cached summary instead of calling LLM", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          content: [{ type: "text", text: "Fresh summary" }],
+        }),
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const session = makeSession({ sessionId: "cached-session-1" });
+
+    // First call: populates cache
+    await summarizeSessions([session], anthropicOptions, cacheDir);
+    expect(session.workContent.llmSummary).toBe("Fresh summary");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Reset llmSummary and call again
+    session.workContent.llmSummary = null;
+    fetchSpy.mockClear();
+
+    await summarizeSessions([session], anthropicOptions, cacheDir);
+    expect(session.workContent.llmSummary).toBe("Fresh summary");
+    // Should NOT have called fetch — cached hit
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("writes new summaries to cache after LLM call", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          content: [{ type: "text", text: "New summary" }],
+        }),
+    }) as unknown as typeof fetch;
+
+    const session = makeSession({ sessionId: "new-session-xyz" });
+    await summarizeSessions([session], anthropicOptions, cacheDir);
+
+    expect(session.workContent.llmSummary).toBe("New summary");
+
+    // Verify cache file exists and contains the summary
+    const { readFile } = await import("node:fs/promises");
+    const cachePath = join(cacheDir, "cc-session-mgr", "cache", "summaries.json");
+    const raw = await readFile(cachePath, "utf-8");
+    const cache = JSON.parse(raw) as Record<string, unknown>;
+    expect(cache.entries).toHaveProperty("new-session-xyz", "New summary");
+  });
+
+  it("works without cache when claudeDir is omitted", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          content: [{ type: "text", text: "No cache summary" }],
+        }),
+    }) as unknown as typeof fetch;
+
+    const sessions = [makeSession(), makeSession()];
+    await summarizeSessions(sessions, anthropicOptions);
+
+    // Both sessions should have been summarized via LLM
+    expect(sessions[0].workContent.llmSummary).toBe("No cache summary");
+    expect(sessions[1].workContent.llmSummary).toBe("No cache summary");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// summarizeProjectWeekly tests
+// ---------------------------------------------------------------------------
+
+describe("summarizeProjectWeekly", () => {
+  beforeEach(() => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  it("returns project summary on successful API call", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          content: [
+            { type: "text", text: "Refactored the entire parser pipeline and added caching." },
+          ],
+        }),
+    }) as unknown as typeof fetch;
+
+    const sessions = [
+      makeSession({
+        startTime: "2026-06-08T10:00:00Z",
+        workContent: makeWorkContent({ primaryIntent: "Add cache" }),
+      }),
+      makeSession({
+        startTime: "2026-06-09T10:00:00Z",
+        workContent: makeWorkContent({ primaryIntent: "Refactor parser" }),
+      }),
+    ];
+
+    const result = await summarizeProjectWeekly(
+      "/proj/cc-session-mgr",
+      sessions,
+      anthropicOptions,
+    );
+
+    expect(result).toBe("Refactored the entire parser pipeline and added caching.");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns null on API error", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+    }) as unknown as typeof fetch;
+
+    const result = await summarizeProjectWeekly(
+      "/proj/test",
+      [makeSession()],
+      anthropicOptions,
+    );
+
+    expect(result).toBeNull();
+  });
+
+  it("sends correct provider format for Ollama", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { role: "assistant", content: "项目级摘要" } }],
+        }),
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await summarizeProjectWeekly(
+      "/proj/test",
+      [makeSession()],
+      ollamaOptions,
+    );
+
+    expect(result).toBe("项目级摘要");
+    const [url] = fetchSpy.mock.calls[0] as [string];
+    expect(url).toBe("http://localhost:11434/v1/chat/completions");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cleanLlmOutput — leaked thinking detection
+// ---------------------------------------------------------------------------
+
+describe("cleanLlmOutput", () => {
+  it("returns clean summaries unchanged", () => {
+    const summary = "修复了登录页面的认证逻辑，优化了Token刷新机制。";
+    expect(cleanLlmOutput(summary)).toBe(summary);
+  });
+
+  it("returns null for leaked chain-of-thought (meta-narrative)", () => {
+    const leaked =
+      "So, the main outcome is that the assistant helped the user find the correct commands to locate Ollama's logs on macOS. I need to mention the methods provided and the conclusion about the App running without logs. Wait, the user's primary intent was in Chinese, so the summary should be in Chinese. Hmm, maybe the user's messages are in Chinese. Let me check the original query again.";
+    expect(cleanLlmOutput(leaked)).toBeNull();
+  });
+
+  it("returns null for English self-talk patterns", () => {
+    const selfTalk =
+      "Let me think about this. The user wants to build a session manager. I should mention the CLI tools. Actually, looking at the code, the parser module was refactored. I need to summarize this properly.";
+    expect(cleanLlmOutput(selfTalk)).toBeNull();
+  });
+
+  it("preserves summaries with occasional 'I' references", () => {
+    // A real summary might contain "I" once — that's fine, not meta-narrative
+    const ok = "The assistant configured the CI pipeline and I verified the deployment was successful.";
+    expect(cleanLlmOutput(ok)).toBe(ok);
+  });
+
+  it("strips thinking prefix, keeps trailing conclusion", () => {
+    const mixed =
+      "Okay let me analyze this session.\nFixed the authentication module and added JWT token refresh.";
+    // Should extract the conclusion line
+    const result = cleanLlmOutput(mixed);
+    expect(result).toBe("Fixed the authentication module and added JWT token refresh.");
+  });
+
+  it("returns null for empty input", () => {
+    expect(cleanLlmOutput("")).toBeNull();
+    expect(cleanLlmOutput("   ")).toBeNull();
+  });
+
+  it("returns short clean text as-is", () => {
+    const short = "配置了Ollama的日志输出路径";
+    expect(cleanLlmOutput(short)).toBe(short);
   });
 });

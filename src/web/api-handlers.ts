@@ -1,4 +1,5 @@
 import type { SessionSummary } from "../types/index.js";
+import { toDateStr } from "../cli/tz-utils.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -146,13 +147,13 @@ export function handleSessions(
 
   if (filters.from) {
     filtered = filtered.filter(
-      (s) => s.startTime !== null && s.startTime.slice(0, 10) >= filters.from!,
+      (s) => s.startTime !== null && toDateStr(s.startTime)! >= filters.from!,
     );
   }
 
   if (filters.to) {
     filtered = filtered.filter(
-      (s) => s.startTime !== null && s.startTime.slice(0, 10) <= filters.to!,
+      (s) => s.startTime !== null && toDateStr(s.startTime)! <= filters.to!,
     );
   }
 

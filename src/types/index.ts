@@ -99,6 +99,38 @@ export interface SessionSummary {
 }
 
 // ---------------------------------------------------------------------------
+// Day-level splitting types
+// ---------------------------------------------------------------------------
+
+/** Per-day slice of a session, derived from entry-level timestamps. */
+export interface DaySlice {
+  /** Calendar date (YYYY-MM-DD) in the configured timezone. */
+  date: string;
+  /** Message counts for entries on this date. */
+  messageCounts: MessageCounts;
+  /** Cost attributed to this date (inline costUSD from entries). */
+  cost: number;
+  /** Input tokens from entries on this date. */
+  inputTokens: number;
+  /** Output tokens from entries on this date. */
+  outputTokens: number;
+  /** Models used by assistant entries on this date. */
+  models: string[];
+  /** File edits from tool_use entries on this date. */
+  fileEdits: FileEditEntry[];
+  /** Total number of entries on this date. */
+  entryCount: number;
+}
+
+/** A session summary enriched with per-day breakdowns. */
+export interface DayIndexedSession {
+  /** Full-session summary (unchanged from buildSessionSummaries). */
+  summary: SessionSummary;
+  /** Per-day slices, one per calendar date with activity. */
+  daySlices: DaySlice[];
+}
+
+// ---------------------------------------------------------------------------
 // Aggregation types (output of aggregate phase)
 // ---------------------------------------------------------------------------
 
@@ -203,6 +235,14 @@ export interface SessionWorkSummary extends SessionSummary {
   workContent: WorkContent;
 }
 
+/** A work session enriched with per-day breakdowns. */
+export interface DayIndexedWorkSession {
+  /** Full work-session summary. */
+  summary: SessionWorkSummary;
+  /** Per-day slices, one per calendar date with activity. */
+  daySlices: DaySlice[];
+}
+
 /** Work sessions grouped by project for a single day. */
 export interface WorkProjectDay {
   projectName: string;
@@ -222,5 +262,24 @@ export interface WorkWeeklyData {
   startDate: string; // YYYY-MM-DD (Monday)
   endDate: string; // YYYY-MM-DD (Sunday)
   days: WorkDailyData[];
+  totalSessions: number;
+}
+
+/** All sessions for one project across a whole week. */
+export interface WorkProjectWeek {
+  projectName: string;
+  sessions: SessionWorkSummary[];
+  /** LLM-generated project-level summary for the week */
+  projectSummary: string | null;
+  /** Maps sessionId → dates within this week where the session has activity. */
+  sessionDates: Map<string, string[]>;
+}
+
+/** Project-centric data for the weekly work report. */
+export interface WorkWeeklyReportData {
+  weekLabel: string; // "2026-W23"
+  startDate: string; // YYYY-MM-DD (Monday)
+  endDate: string; // YYYY-MM-DD (Sunday)
+  projects: WorkProjectWeek[];
   totalSessions: number;
 }

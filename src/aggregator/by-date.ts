@@ -1,93 +1,86 @@
-import type { SessionSummary, DateGroup } from "../types/index.js";
+import type { SessionSummary, DateGroup, DayIndexedSession } from "../types/index.js";
+import { formatTime } from "../cli/tz-utils.js";
 
 /**
- * Group sessions by calendar date (using session start timestamp)
+ * Group day-indexed sessions by calendar date using per-day slices,
  * and compute per-day statistics.
+ *
+ * A session appears in every date where it has a non-empty DaySlice.
  */
 export function aggregateByDate(
-  summaries: SessionSummary[],
+  indexed: DayIndexedSession[],
   dateRange?: { start?: string; end?: string },
 ): DateGroup[] {
-  const filtered = filterByDateRange(summaries, dateRange);
   const groups = new Map<string, SessionSummary[]>();
+  const sliceData = new Map<string, { messages: number; cost: number; inputTokens: number; outputTokens: number; models: Record<string, number> }[]>();
 
-  for (const s of filtered) {
-    const date = toDateString(s.startTime);
-    if (!date) continue;
+  for (const { summary, daySlices } of indexed) {
+    for (const slice of daySlices) {
+      if (dateRange) {
+        if (dateRange.start && slice.date < dateRange.start) continue;
+        if (dateRange.end && slice.date > dateRange.end) continue;
+      }
 
-    if (!groups.has(date)) {
-      groups.set(date, []);
+      if (!groups.has(slice.date)) {
+        groups.set(slice.date, []);
+        sliceData.set(slice.date, []);
+      }
+      groups.get(slice.date)!.push(summary);
+
+      const models: Record<string, number> = {};
+      for (const model of slice.models) {
+        models[model] = (models[model] ?? 0) + 1;
+      }
+
+      sliceData.get(slice.date)!.push({
+        messages: slice.messageCounts.user + slice.messageCounts.assistant,
+        cost: slice.cost,
+        inputTokens: slice.inputTokens,
+        outputTokens: slice.outputTokens,
+        models,
+      });
     }
-    groups.get(date)!.push(s);
   }
 
   return [...groups.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, sessions]) => buildDateGroup(date, sessions));
-}
+    .map(([date, sessions]) => {
+      const dataPoints = sliceData.get(date) ?? [];
+      const totalMessages = dataPoints.reduce((sum, d) => sum + d.messages, 0);
+      const totalCost = dataPoints.reduce((sum, d) => sum + d.cost, 0);
+      const totalInputTokens = dataPoints.reduce((sum, d) => sum + d.inputTokens, 0);
+      const totalOutputTokens = dataPoints.reduce((sum, d) => sum + d.outputTokens, 0);
+      const models: Record<string, number> = {};
+      for (const d of dataPoints) {
+        for (const [model, count] of Object.entries(d.models)) {
+          models[model] = (models[model] ?? 0) + count;
+        }
+      }
 
-function filterByDateRange(
-  summaries: SessionSummary[],
-  range?: { start?: string; end?: string },
-): SessionSummary[] {
-  if (!range) return summaries;
-
-  return summaries.filter((s) => {
-    if (!s.startTime) return false;
-    const date = toDateString(s.startTime)!;
-    if (range.start && date < range.start) return false;
-    if (range.end && date > range.end) return false;
-    return true;
-  });
-}
-
-function buildDateGroup(date: string, sessions: SessionSummary[]): DateGroup {
-  const totalMessages = sessions.reduce(
-    (sum, s) => sum + s.messageCounts.user + s.messageCounts.assistant,
-    0,
-  );
-  const totalCost = sessions.reduce((sum, s) => sum + s.cost.totalUSD, 0);
-  const totalInputTokens = sessions.reduce((sum, s) => sum + s.cost.inputTokens, 0);
-  const totalOutputTokens = sessions.reduce((sum, s) => sum + s.cost.outputTokens, 0);
-
-  const models: Record<string, number> = {};
-  for (const s of sessions) {
-    for (const model of s.models) {
-      models[model] = (models[model] ?? 0) + 1;
-    }
-  }
-
-  return {
-    date,
-    sessions,
-    totalMessages,
-    totalCost: Math.round(totalCost * 100) / 100,
-    totalInputTokens,
-    totalOutputTokens,
-    models,
-    activeSpan: computeActiveSpan(sessions),
-  };
+      return {
+        date,
+        sessions,
+        totalMessages,
+        totalCost: Math.round(totalCost * 100) / 100,
+        totalInputTokens,
+        totalOutputTokens,
+        models,
+        activeSpan: computeActiveSpan(sessions),
+      };
+    });
 }
 
 function computeActiveSpan(sessions: SessionSummary[]): string | null {
-  const times: number[] = [];
+  const times: { ts: string }[] = [];
   for (const s of sessions) {
-    if (s.startTime) times.push(new Date(s.startTime).getTime());
-    if (s.endTime) times.push(new Date(s.endTime).getTime());
+    if (s.startTime) times.push({ ts: s.startTime });
+    if (s.endTime) times.push({ ts: s.endTime });
   }
   if (times.length < 2) return null;
 
-  times.sort((a, b) => a - b);
-  const earliest = new Date(times[0]);
-  const latest = new Date(times[times.length - 1]);
+  const sorted = times
+    .map((t) => ({ ts: t.ts, ms: new Date(t.ts).getTime() }))
+    .sort((a, b) => a.ms - b.ms);
 
-  const fmt = (d: Date) =>
-    `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-
-  return `${fmt(earliest)} - ${fmt(latest)}`;
-}
-
-function toDateString(ts: string | null): string | null {
-  if (!ts) return null;
-  return ts.slice(0, 10); // "YYYY-MM-DD"
+  return `${formatTime(sorted[0].ts)} - ${formatTime(sorted[sorted.length - 1].ts)}`;
 }
