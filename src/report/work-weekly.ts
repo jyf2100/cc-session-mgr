@@ -6,8 +6,11 @@ import { toDateStr } from "../cli/tz-utils.js";
  *
  * Organized as: Project → LLM project summary → categorized session list with dates.
  * Falls back to heuristic when no project-level LLM summary is available.
+ *
+ * @param data - The work weekly report data to render.
+ * @param insightsMarkdown - Optional pre-rendered insights section to append.
  */
-export function generateWorkWeeklyReport(data: WorkWeeklyReportData): string {
+export function generateWorkWeeklyReport(data: WorkWeeklyReportData, insightsMarkdown?: string): string {
   if (data.totalSessions === 0) {
     return `# 工作周报: ${data.weekLabel}\n\nNo work sessions found for week ${data.weekLabel}.\n`;
   }
@@ -41,6 +44,10 @@ export function generateWorkWeeklyReport(data: WorkWeeklyReportData): string {
     }
 
     lines.push("");
+  }
+
+  if (insightsMarkdown) {
+    lines.push(insightsMarkdown);
   }
 
   return lines.join("\n");

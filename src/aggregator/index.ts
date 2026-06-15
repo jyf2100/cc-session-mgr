@@ -9,3 +9,4 @@ export { extractFileEditSummary } from "./file-edits.js";
 export { buildWorkSummaries } from "./work-summaries.js";
 export { aggregateWorkByDate } from "./work-by-date.js";
 export { aggregateWorkByWeek, aggregateWorkByProject } from "./work-by-week.js";
+export { aggregateWorkByRange, buildMonthlyReportData, buildQuarterlyReportData } from "./work-by-range.js";

@@ -9,7 +9,7 @@
 import type { SessionWorkSummary, WorkContent, FileEditEntry } from "../types/index.js";
 import type { ProviderKind, LlmProviderConfig } from "./providers.js";
 import { getProvider } from "./providers.js";
-import { buildSummaryPrompt, buildProjectWeeklyPrompt } from "./prompt.js";
+import { buildSummaryPrompt, buildProjectWeeklyPrompt, buildProjectMonthlyPrompt, buildProjectQuarterlyPrompt } from "./prompt.js";
 import { loadCache, saveCache, getCachedSummary, setCachedSummary, pruneCache } from "./cache.js";
 
 // ---------------------------------------------------------------------------
@@ -292,6 +292,130 @@ export async function summarizeProjectWeekly(
         error instanceof Error ? error.message : String(error);
       process.stderr.write(
         `Project LLM API error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${message}\n`,
+      );
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      return null;
+    }
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Project-level monthly summarization
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a project-level monthly summary using per-session summaries
+ * as input. No cache — consistent with projectWeekly pattern.
+ *
+ * Returns the summary text, or null on failure.
+ */
+export async function summarizeProjectMonthly(
+  projectName: string,
+  sessions: SessionWorkSummary[],
+  options: SummarizeOptions,
+): Promise<string | null> {
+  const provider = getProvider(options.provider);
+  const prompt = buildProjectMonthlyPrompt(projectName, sessions);
+  const { url, init } = provider.buildRequest(prompt, options.config);
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, init);
+
+      if (response.status === 429 && attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      if (!response.ok) {
+        process.stderr.write(
+          `Project monthly LLM API error: ${response.status} ${response.statusText}\n`,
+        );
+        return null;
+      }
+
+      const body: unknown = await response.json();
+      const result = provider.parseResponse(body);
+      if (!result) {
+        process.stderr.write(
+          `Project monthly LLM parseWarning: response missing expected text.\n`,
+        );
+      }
+      return result;
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `Project monthly LLM API error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${message}\n`,
+      );
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      return null;
+    }
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Project-level quarterly summarization
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a project-level quarterly summary using per-session summaries
+ * as input. No cache — consistent with projectWeekly pattern.
+ *
+ * Returns the summary text, or null on failure.
+ */
+export async function summarizeProjectQuarterly(
+  projectName: string,
+  sessions: SessionWorkSummary[],
+  options: SummarizeOptions,
+): Promise<string | null> {
+  const provider = getProvider(options.provider);
+  const prompt = buildProjectQuarterlyPrompt(projectName, sessions);
+  const { url, init } = provider.buildRequest(prompt, options.config);
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, init);
+
+      if (response.status === 429 && attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      if (!response.ok) {
+        process.stderr.write(
+          `Project quarterly LLM API error: ${response.status} ${response.statusText}\n`,
+        );
+        return null;
+      }
+
+      const body: unknown = await response.json();
+      const result = provider.parseResponse(body);
+      if (!result) {
+        process.stderr.write(
+          `Project quarterly LLM parseWarning: response missing expected text.\n`,
+        );
+      }
+      return result;
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `Project quarterly LLM API error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${message}\n`,
       );
       if (attempt < MAX_RETRIES) {
         const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);

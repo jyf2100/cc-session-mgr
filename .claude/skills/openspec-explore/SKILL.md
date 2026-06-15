@@ -17,6 +17,18 @@ Enter explore mode. Think deeply. Visualize freely. Follow the conversation wher
 
 ---
 
+## Input
+
+The argument after `/opsx:explore` is whatever the user wants to think about. Could be:
+
+- A vague idea: "real-time collaboration"
+- A specific problem: "the auth system is getting unwieldy"
+- A change name: "add-dark-mode" (to explore in context of that change)
+- A comparison: "postgres vs sqlite for this"
+- Nothing (just enter explore mode)
+
+---
+
 ## The Stance
 
 - **Curious, not prescriptive** - Ask questions that emerge naturally, don't follow a script

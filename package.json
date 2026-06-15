@@ -1,6 +1,6 @@
 {
   "name": "cc-session-mgr",
-  "version": "0.1.0",
+  "version": "2026.6.15",
   "description": "CLI tool to analyze Claude Code session data and generate daily/weekly/project reports",
   "type": "module",
   "main": "dist/index.js",
@@ -45,6 +45,7 @@
     "commander": "^15.0.0",
     "glob": "^13.0.6",
     "ink": "^6.8.0",
+    "marked": "^18.0.5",
     "react": "^19.2.7",
     "zustand": "^5.0.14"
   },

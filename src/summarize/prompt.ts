@@ -133,3 +133,82 @@ export function buildProjectWeeklyPrompt(
 
   return `${PROJECT_SYSTEM_PROMPT}\n\n## Project: ${projectShort}\n\n${entries.join("\n")}\n\n## Task\nSummarize the overall work done on this project this week in 2-3 sentences:`;
 }
+
+// ---------------------------------------------------------------------------
+// Project-level monthly prompt
+// ---------------------------------------------------------------------------
+
+const PROJECT_MONTHLY_SYSTEM_PROMPT = `You are a monthly work summarizer. Given a list of coding sessions for one project across a month, produce a concise 2-3 paragraph summary describing what was accomplished for the project as a whole.
+
+Rules:
+- Write in the same language as the session data (Chinese if Chinese, English if English).
+- Focus on the overall arc, key outcomes, and progression of work across the month.
+- Group related work thematically rather than listing chronologically.
+- Do not mention session counts or individual dates — summarize at a higher level.
+- Output ONLY the summary text. No meta-commentary, no thinking process, no "Let me...", "Okay...", or "The project's main focus was...".
+- Start directly with the accomplishment, e.g. "完成了..." or "Built..." or "Refactored...".`;
+
+/**
+ * Build a project-level monthly summary prompt from all sessions of that project.
+ */
+export function buildProjectMonthlyPrompt(
+  projectName: string,
+  sessions: SessionWorkSummary[],
+): string {
+  const entries = buildSessionEntries(sessions);
+  const projectShort = projectName.split("/").pop() || projectName;
+  return `${PROJECT_MONTHLY_SYSTEM_PROMPT}\n\n## Project: ${projectShort}\n\n${entries}\n\n## Task\nSummarize the overall work done on this project this month in 2-3 paragraphs:`;
+}
+
+// ---------------------------------------------------------------------------
+// Project-level quarterly prompt
+// ---------------------------------------------------------------------------
+
+const PROJECT_QUARTERLY_SYSTEM_PROMPT = `You are a quarterly work summarizer. Given a list of coding sessions for one project across a quarter (3 months), produce a concise 2-3 paragraph summary describing what was accomplished for the project as a whole.
+
+Rules:
+- Write in the same language as the session data (Chinese if Chinese, English if English).
+- Focus on the overall arc, major milestones, and progression of work across the quarter.
+- Group related work thematically rather than listing chronologically.
+- Do not mention session counts or individual dates — summarize at a strategic level.
+- Output ONLY the summary text. No meta-commentary, no thinking process, no "Let me...", "Okay...", or "The project's main focus was...".
+- Start directly with the accomplishment, e.g. "完成了..." or "Built..." or "Refactored...".`;
+
+/**
+ * Build a project-level quarterly summary prompt from all sessions of that project.
+ */
+export function buildProjectQuarterlyPrompt(
+  projectName: string,
+  sessions: SessionWorkSummary[],
+): string {
+  const entries = buildSessionEntries(sessions);
+  const projectShort = projectName.split("/").pop() || projectName;
+  return `${PROJECT_QUARTERLY_SYSTEM_PROMPT}\n\n## Project: ${projectShort}\n\n${entries}\n\n## Task\nSummarize the overall work done on this project this quarter in 2-3 paragraphs:`;
+}
+
+// ---------------------------------------------------------------------------
+// Shared entry builder
+// ---------------------------------------------------------------------------
+
+function buildSessionEntries(sessions: SessionWorkSummary[]): string {
+  return sessions
+    .filter((s) => s.startTime)
+    .sort((a, b) => a.startTime!.localeCompare(b.startTime!))
+    .map((s) => {
+      const date = toDateStr(s.startTime!) ?? "unknown";
+      const intent =
+        s.workContent.llmSummary
+        || s.workContent.compactedSummary
+        || s.workContent.primaryIntent;
+      const modules =
+        s.workContent.moduleSummary.length > 0
+          ? s.workContent.moduleSummary.join(", ")
+          : null;
+      const fileCount = s.fileEdits.length;
+      const parts = [`**${intent}**`];
+      if (modules) parts.push(modules);
+      if (fileCount > 0) parts.push(`${fileCount} file${fileCount > 1 ? "s" : ""}`);
+      return `- ${date}: ${parts.join(" — ")}`;
+    })
+    .join("\n");
+}

@@ -159,6 +159,34 @@ describe("generateWorkDailyReport", () => {
     expect(report).toContain("实现了认证模块的登录和会话管理功能");
     expect(report).not.toContain("Build auth module");
   });
+
+  it("appends insights section when provided", () => {
+    const session = makeSession("Work", ["a.ts"]);
+    const data: WorkDailyData = {
+      date: "2026-06-09",
+      projects: [makeProjectDay("/proj/x", [session])],
+      sessionCount: 1,
+    };
+
+    const insights = "## 💡 洞察\n\n### 🔍 关键洞察\n\n- ⚠️ **High cost**";
+    const report = generateWorkDailyReport(data, insights);
+
+    expect(report).toContain("💡 洞察");
+    expect(report).toContain("High cost");
+  });
+
+  it("omits insights section when not provided", () => {
+    const session = makeSession("Work", ["a.ts"]);
+    const data: WorkDailyData = {
+      date: "2026-06-09",
+      projects: [makeProjectDay("/proj/x", [session])],
+      sessionCount: 1,
+    };
+
+    const report = generateWorkDailyReport(data);
+
+    expect(report).not.toContain("💡 洞察");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -312,5 +340,28 @@ describe("generateWorkWeeklyReport", () => {
 
     expect(report).toContain("06-09:");
     expect(report).not.toContain("2026-06-09:");
+  });
+
+  it("appends insights section when provided", () => {
+    const data: WorkWeeklyReportData = {
+      weekLabel: "2026-W24",
+      startDate: "2026-06-08",
+      endDate: "2026-06-14",
+      projects: [
+        {
+          projectName: "/proj/x",
+          sessions: [{ ...makeSession("Work"), startTime: "2026-06-09T10:00:00Z" }],
+          projectSummary: null,
+          sessionDates: new Map(),
+        },
+      ],
+      totalSessions: 1,
+    };
+
+    const insights = "## 💡 洞察\n\n### 🔍 关键洞察\n\n- ⚠️ **High cost**";
+    const report = generateWorkWeeklyReport(data, insights);
+
+    expect(report).toContain("💡 洞察");
+    expect(report).toContain("High cost");
   });
 });

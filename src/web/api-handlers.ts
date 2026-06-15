@@ -1,5 +1,6 @@
-import type { SessionSummary } from "../types/index.js";
+import type { SessionSummary, JsonlEntry, Phase, LintFinding, TimelineResult, PostmortemResult } from "../types/index.js";
 import { toDateStr } from "../cli/tz-utils.js";
+import { detectPhases, lintSession, buildTimeline, analyzePostmortem } from "../analysis/index.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,6 +200,124 @@ export function handleSessionDetail(
     data: {
       ...toSessionJson(s),
       fileEdits: [...s.fileEdits].sort((a, b) => b.editCount - a.editCount).slice(0, 20),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Session analysis (serialized, browser-safe JSON)
+// ---------------------------------------------------------------------------
+
+export interface PhaseJson {
+  name: string;
+  startTime: string;
+  endTime: string;
+  durationMs: number;
+  toolCount: number;
+  filesModified: string[];
+  errorCount: number;
+  retryCount: number;
+  costUSD: number;
+}
+
+export interface LintFindingJson {
+  ruleId: string;
+  severity: string;
+  message: string;
+}
+
+export interface TimelinePhaseJson {
+  name: string;
+  durationMs: number;
+  costUSD: number;
+  toolCallCount: number;
+  errorCount: number;
+}
+
+export interface TimelineSummaryJson {
+  totalDurationMs: number;
+  totalCost: number;
+  totalToolCalls: number;
+  wastedSpendUSD: number;
+}
+
+export interface TimelineJson {
+  phases: TimelinePhaseJson[];
+  summary: TimelineSummaryJson;
+}
+
+export interface PostmortemViolationJson {
+  rule: string;
+  description: string;
+}
+
+export interface PostmortemJson {
+  hasCrash: boolean;
+  crashType: string | null;
+  lastUserPrompt: string | null;
+  rootCauseSteps: string[];
+  violations: PostmortemViolationJson[];
+  recoverySuggestions: string[];
+}
+
+export interface SessionAnalysisJson {
+  phases: PhaseJson[];
+  lintFindings: LintFindingJson[];
+  timeline: TimelineJson;
+  postmortem: PostmortemJson;
+}
+
+/**
+ * Run deep analysis on a session's raw entries.
+ * Pure function — no I/O, safe to call on the request path.
+ * Returns a serialized, browser-friendly shape (no heavy data like
+ * entries[] or toolCalls[]).
+ */
+export function handleSessionAnalysis(entries: JsonlEntry[]): SessionAnalysisJson {
+  const phases = detectPhases(entries);
+  const lintFindings = lintSession(entries);
+  const timeline = buildTimeline(entries);
+  const postmortem = analyzePostmortem(entries);
+
+  return {
+    phases: phases.map(p => ({
+      name: p.name,
+      startTime: p.startTime,
+      endTime: p.endTime,
+      durationMs: p.durationMs,
+      toolCount: p.toolCalls.length,
+      filesModified: p.filesModified,
+      errorCount: p.errorCount,
+      retryCount: p.retryCount,
+      costUSD: p.costUSD,
+    })),
+    lintFindings: lintFindings.map(f => ({
+      ruleId: f.ruleId,
+      severity: f.severity,
+      message: f.message,
+    })),
+    timeline: {
+      phases: timeline.phases.map(tp => ({
+        name: tp.name,
+        durationMs: tp.durationMs,
+        costUSD: tp.costUSD,
+        toolCallCount: tp.toolCallCount,
+        errorCount: tp.errorCount,
+      })),
+      summary: {
+        totalDurationMs: timeline.summary.totalDurationMs,
+        totalCost: timeline.summary.totalCost,
+        totalToolCalls: timeline.summary.totalToolCalls,
+        wastedSpendUSD: timeline.summary.wastedSpendUSD,
+      },
+    },
+    postmortem: {
+      hasCrash: postmortem.crashInfo !== null,
+      crashType: postmortem.crashInfo?.type ?? null,
+      lastUserPrompt: postmortem.crashInfo?.lastUserPrompt ?? null,
+      rootCauseSteps: postmortem.rootCauseTimeline.map(e => e.annotation),
+      violations: postmortem.agentsMdViolations,
+      recoverySuggestions: postmortem.recoverySuggestions,
     },
   };
 }

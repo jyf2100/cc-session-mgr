@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { buildSessionSummaries } from "./aggregator/build-summaries.js";
 import { buildDayIndexedSummaries } from "./aggregator/build-day-indexed.js";
+import type { DayIndexedSession, SessionSummary } from "./types/index.js";
 import { mergeCostData } from "./aggregator/merge-cost.js";
 import { aggregateByDate } from "./aggregator/by-date.js";
 import { aggregateByWeek } from "./aggregator/by-week.js";
@@ -19,8 +19,21 @@ const CLAUDE_DIR = join(homedir(), ".claude");
 const skipIfNoData = existsSync(CLAUDE_DIR) ? describe : describe.skip;
 
 skipIfNoData("Integration: real ~/.claude data", () => {
+  // Parse the real ~/.claude corpus once and share it across every test.
+  // Previously each it() re-parsed all JSONL files independently (~4-5s each),
+  // which blew past vitest's default 5s timeout. Parsing once in beforeAll cuts
+  // total I/O to a third; the per-test ceiling is raised in vitest.config.ts
+  // (integration project: 60s).
+  let cachedIndexed: DayIndexedSession[] = [];
+  let cachedSummaries: SessionSummary[] = [];
+
+  beforeAll(async () => {
+    cachedIndexed = await buildDayIndexedSummaries(CLAUDE_DIR);
+    cachedSummaries = cachedIndexed.map((i) => i.summary);
+  }, 120000);
+
   it("parses sessions and generates a daily report for today", async () => {
-    const indexed = await buildDayIndexedSummaries(CLAUDE_DIR);
+    const indexed = cachedIndexed;
     expect(indexed.length).toBeGreaterThan(0);
 
     const summaries = indexed.map((i) => i.summary);
@@ -69,7 +82,7 @@ skipIfNoData("Integration: real ~/.claude data", () => {
   });
 
   it("generates a weekly report for the current week", async () => {
-    const indexed = await buildDayIndexedSummaries(CLAUDE_DIR);
+    const indexed = cachedIndexed;
     const summaries = indexed.map((i) => i.summary);
     const enriched = await mergeCostData(summaries, CLAUDE_DIR);
     const enrichedIndexed = indexed.map((item, i) => ({
@@ -119,7 +132,7 @@ skipIfNoData("Integration: real ~/.claude data", () => {
   });
 
   it("generates a project report for an existing project", async () => {
-    const summaries = await buildSessionSummaries(CLAUDE_DIR);
+    const summaries = cachedSummaries;
     const enriched = await mergeCostData(summaries, CLAUDE_DIR);
 
     const projectGroups = aggregateByProject(enriched);

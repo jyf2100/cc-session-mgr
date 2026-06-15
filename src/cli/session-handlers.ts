@@ -5,6 +5,9 @@ import { mergeCostData } from "../aggregator/merge-cost.js";
 import { formatSessionList, formatSessionDetail } from "../report/session-format.js";
 import { toDateStr } from "./tz-utils.js";
 import { writeReport } from "../report/output.js";
+import { loadSessionEntries } from "./entry-loader.js";
+import { detectPhases, lintSession, buildTimeline, analyzePostmortem } from "../analysis/index.js";
+import { formatSessionReport } from "../report/session-report.js";
 import type { SessionSummary } from "../types/index.js";
 
 // ---------------------------------------------------------------------------
@@ -23,6 +26,7 @@ interface ListOptions {
 interface ShowOptions {
   claudeDir?: string;
   output?: string;
+  analysis?: boolean;
 }
 
 function resolveClaudeDir(claudeDir?: string): string {
@@ -129,7 +133,17 @@ export async function runShow(
   const all = await loadSummaries(claudeDir);
 
   const session = findByPrefix(all, sessionId);
-  const markdown = formatSessionDetail(session);
+  let markdown = formatSessionDetail(session);
+
+  if (opts.analysis) {
+    const { entries } = await loadSessionEntries(session.sessionId, claudeDir);
+    const phases = detectPhases(entries);
+    const lintFindings = lintSession(entries);
+    const timeline = buildTimeline(entries);
+    const postmortem = analyzePostmortem(entries);
+    markdown += "\n\n" + formatSessionReport({ phases, lintFindings, timeline, postmortem });
+  }
+
   await writeReport(markdown, opts.output);
 }
 

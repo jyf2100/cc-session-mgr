@@ -15,7 +15,7 @@ import { generateDailyReport } from "../report/daily.js";
 import { generateWeeklyReport } from "../report/weekly.js";
 import { generateProjectReport } from "../report/project-report.js";
 import { writeReport } from "../report/output.js";
-import { buildWorkDailyMarkdown, buildWorkWeeklyMarkdown } from "../report/pipeline.js";
+import { buildWorkDailyMarkdown, buildWorkWeeklyMarkdown, buildWorkMonthlyMarkdown, buildWorkQuarterlyMarkdown } from "../report/pipeline.js";
 import { todayStr, parseWeekArg, getISOWeek } from "./helpers.js";
 import { setTimezone } from "./tz-utils.js";
 import { runList, runShow } from "./session-handlers.js";
@@ -24,6 +24,29 @@ import {
   detectProvider,
 } from "../summarize/index.js";
 import type { SummarizeOptions } from "../summarize/index.js";
+import {
+  generateInsights,
+  detectCostAnomalies,
+  compareModels,
+  auditCostData,
+} from "../analytics/index.js";
+import { generateInsightsReport } from "../report/insights-report.js";
+import { renderHtml, renderJson, renderCsv } from "../export/index.js";
+import {
+  detectPhases,
+  lintSession,
+  generateStandup,
+  buildTimeline,
+  analyzePostmortem,
+  diffSessions,
+} from "../analysis/index.js";
+import {
+  formatSessionReport,
+  formatLintReport,
+  formatStandupReport,
+  formatDiffReport,
+} from "../report/session-report.js";
+import { loadSessionEntries } from "./entry-loader.js";
 import type {
   DailyReportData,
   WeeklyReportData,
@@ -42,6 +65,46 @@ interface LlmFlags {
   llmModel?: string;
   llmBaseUrl?: string;
   noLlm?: boolean;
+}
+
+interface FormatFlags {
+  format?: string;
+}
+
+type OutputFormat = "md" | "html" | "json" | "csv";
+
+/**
+ * Apply output format conversion to a markdown report.
+ *
+ * - md:    pass through markdown unchanged
+ * - html:  convert markdown to self-contained HTML
+ * - json:  serialize sessions (or fallback object) as JSON
+ * - csv:   render sessions as CSV rows
+ */
+function applyFormat(
+  markdown: string,
+  format: OutputFormat,
+  sessions?: SessionWorkSummary[],
+): string {
+  switch (format) {
+    case "html":
+      return renderHtml(markdown);
+    case "json":
+      return renderJson(sessions ?? { markdown });
+    case "csv":
+      return sessions ? renderCsv(sessions) : markdown;
+    default:
+      return markdown;
+  }
+}
+
+/**
+ * Resolve format flag from a subcommand's options, defaulting to "md".
+ */
+function resolveFormat(opts: OptionValues): OutputFormat {
+  const f = (opts.format as string) ?? "md";
+  if (f === "html" || f === "json" || f === "csv") return f;
+  return "md";
 }
 
 /**
@@ -317,7 +380,7 @@ async function runWorkDaily(
   const cmdOpts = program.commands
     .find((c) => c.name() === "report")
     ?.commands.find((c) => c.name() === "work-daily")
-    ?.opts() as LlmFlags | undefined;
+    ?.opts() as (LlmFlags & FormatFlags) | undefined;
   const globalOpts = program.opts();
   const claudeDir = resolveClaudeDir(globalOpts);
   const date = dateArg ?? todayStr();
@@ -336,7 +399,9 @@ async function runWorkDaily(
   });
 
   const markdown = result?.markdown ?? `# 工作日报: ${date}\n\nNo work sessions found for ${date}.\n`;
-  await writeReport(markdown, globalOpts.output as string | undefined);
+  const format = resolveFormat({ format: cmdOpts?.format } as OptionValues);
+  const output = applyFormat(markdown, format, result?.sessions);
+  await writeReport(output, globalOpts.output as string | undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +414,7 @@ async function runWorkWeekly(
   const cmdOpts = program.commands
     .find((c) => c.name() === "report")
     ?.commands.find((c) => c.name() === "work-weekly")
-    ?.opts() as LlmFlags | undefined;
+    ?.opts() as (LlmFlags & FormatFlags) | undefined;
   const globalOpts = program.opts();
   const claudeDir = resolveClaudeDir(globalOpts);
 
@@ -387,18 +452,217 @@ async function runWorkWeekly(
 
   if (!result) {
     const weekLabel = `${year}-W${String(week).padStart(2, "0")}`;
-    await writeReport(
-      `# 工作周报: ${weekLabel}\n\nNo work sessions found for week ${weekLabel}.\n`,
-      globalOpts.output as string | undefined,
-    );
+    const fallback = `# 工作周报: ${weekLabel}\n\nNo work sessions found for week ${weekLabel}.\n`;
+    const format = resolveFormat({ format: cmdOpts?.format } as OptionValues);
+    await writeReport(applyFormat(fallback, format), globalOpts.output as string | undefined);
     return;
   }
 
-  await writeReport(result.markdown, globalOpts.output as string | undefined);
+  const format = resolveFormat({ format: cmdOpts?.format } as OptionValues);
+  const output = applyFormat(result.markdown, format, result.sessions);
+  await writeReport(output, globalOpts.output as string | undefined);
 }
 
 // ---------------------------------------------------------------------------
-// CLI definition
+// Work-monthly report
+// ---------------------------------------------------------------------------
+
+async function runWorkMonthly(
+  monthArg: string | undefined,
+): Promise<void> {
+  const cmdOpts = program.commands
+    .find((c) => c.name() === "report")
+    ?.commands.find((c) => c.name() === "work-monthly")
+    ?.opts() as (LlmFlags & FormatFlags) | undefined;
+  const globalOpts = program.opts();
+  const claudeDir = resolveClaudeDir(globalOpts);
+
+  let year: number;
+  let month: number;
+
+  if (monthArg) {
+    const match = /^(\d{4})-(\d{2})$/.exec(monthArg);
+    if (!match) {
+      process.stderr.write(
+        `Invalid month format: "${monthArg}". Use YYYY-MM (e.g. 2026-06).\n`,
+      );
+      process.exit(1);
+    }
+    year = parseInt(match[1], 10);
+    month = parseInt(match[2], 10);
+    if (month < 1 || month > 12) {
+      process.stderr.write(`Invalid month: ${month}. Must be 01-12.\n`);
+      process.exit(1);
+    }
+  } else {
+    const now = new Date();
+    year = now.getFullYear();
+    month = now.getMonth() + 1;
+  }
+
+  const indexed = await buildDayIndexedWorkSummaries(claudeDir);
+  const summarizeOptions = await resolveSummarizeOptions({
+    llm: cmdOpts?.llm,
+    llmModel: cmdOpts?.llmModel,
+    llmBaseUrl: cmdOpts?.llmBaseUrl,
+    noLlm: cmdOpts?.noLlm,
+  });
+
+  const result = await buildWorkMonthlyMarkdown(indexed, year, month, {
+    summarizeOptions,
+    claudeDir,
+  });
+
+  if (!result) {
+    const label = `${year}-${String(month).padStart(2, "0")}`;
+    const fallback = `# 工作月报: ${label}\n\nNo work sessions found for ${label}.\n`;
+    const format = resolveFormat({ format: cmdOpts?.format } as OptionValues);
+    await writeReport(applyFormat(fallback, format), globalOpts.output as string | undefined);
+    return;
+  }
+
+  const format = resolveFormat({ format: cmdOpts?.format } as OptionValues);
+  const output = applyFormat(result.markdown, format, result.sessions);
+  await writeReport(output, globalOpts.output as string | undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Work-quarterly report
+// ---------------------------------------------------------------------------
+
+async function runWorkQuarterly(
+  quarterArg: string | undefined,
+): Promise<void> {
+  const cmdOpts = program.commands
+    .find((c) => c.name() === "report")
+    ?.commands.find((c) => c.name() === "work-quarterly")
+    ?.opts() as (LlmFlags & FormatFlags) | undefined;
+  const globalOpts = program.opts();
+  const claudeDir = resolveClaudeDir(globalOpts);
+
+  let year: number;
+  let quarter: number;
+
+  if (quarterArg) {
+    const match = /^(\d{4})-Q(\d)$/.exec(quarterArg);
+    if (!match) {
+      process.stderr.write(
+        `Invalid quarter format: "${quarterArg}". Use YYYY-QN (e.g. 2026-Q2).\n`,
+      );
+      process.exit(1);
+    }
+    year = parseInt(match[1], 10);
+    quarter = parseInt(match[2], 10);
+    if (quarter < 1 || quarter > 4) {
+      process.stderr.write(`Invalid quarter: ${quarter}. Must be 1-4.\n`);
+      process.exit(1);
+    }
+  } else {
+    const now = new Date();
+    year = now.getFullYear();
+    quarter = Math.floor(now.getMonth() / 3) + 1;
+  }
+
+  const indexed = await buildDayIndexedWorkSummaries(claudeDir);
+  const summarizeOptions = await resolveSummarizeOptions({
+    llm: cmdOpts?.llm,
+    llmModel: cmdOpts?.llmModel,
+    llmBaseUrl: cmdOpts?.llmBaseUrl,
+    noLlm: cmdOpts?.noLlm,
+  });
+
+  const result = await buildWorkQuarterlyMarkdown(indexed, year, quarter, {
+    summarizeOptions,
+    claudeDir,
+  });
+
+  if (!result) {
+    const label = `${year}-Q${quarter}`;
+    const fallback = `# 工作季报: ${label}\n\nNo work sessions found for ${label}.\n`;
+    const format = resolveFormat({ format: cmdOpts?.format } as OptionValues);
+    await writeReport(applyFormat(fallback, format), globalOpts.output as string | undefined);
+    return;
+  }
+
+  const format = resolveFormat({ format: cmdOpts?.format } as OptionValues);
+  const output = applyFormat(result.markdown, format, result.sessions);
+  await writeReport(output, globalOpts.output as string | undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Insights report
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a date N days before the given date string (YYYY-MM-DD).
+ * Returns YYYY-MM-DD format.
+ */
+function subtractDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() - days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+async function runInsights(opts: OptionValues): Promise<void> {
+  const globalOpts = program.opts();
+  const claudeDir = resolveClaudeDir(globalOpts);
+
+  const today = todayStr();
+  const from = (opts.from as string) ?? subtractDays(today, 6);
+  const to = (opts.to as string) ?? today;
+
+  // Load & enrich work summaries
+  const indexed = await buildDayIndexedWorkSummaries(claudeDir);
+  const summaries = indexed.map((i) => i.summary);
+  const enriched = await mergeCostData(summaries, claudeDir);
+
+  // Patch indexed with enriched summaries (mergeCostData preserves workContent at runtime)
+  const enrichedIndexed = indexed.map((item, i) => ({
+    ...item,
+    summary: { ...item.summary, cost: enriched[i].cost } as SessionWorkSummary,
+  }));
+
+  // Filter to sessions active in the date range
+  const sessions = enrichedIndexed
+    .filter(({ daySlices }) => daySlices.some((s) => s.date >= from && s.date <= to))
+    .map(({ summary }) => summary);
+
+  if (sessions.length === 0) {
+    const fallback = `# Insights Report\n\nNo sessions found from ${from} to ${to}.\n`;
+    const format = resolveFormat(opts);
+    await writeReport(applyFormat(fallback, format), globalOpts.output as string | undefined);
+    return;
+  }
+
+  // Build DateGroup[] for anomaly detection (accepts DayIndexedSession-compatible input)
+  const dateGroups = aggregateByDate(
+    enrichedIndexed as unknown as Parameters<typeof aggregateByDate>[0],
+    { start: from, end: to },
+  );
+
+  // Run all analytics
+  const insights = generateInsights(sessions);
+  const anomalyResult = detectCostAnomalies(dateGroups);
+  const modelComparisons = compareModels(sessions);
+  const auditReport = auditCostData(sessions);
+
+  const markdown = generateInsightsReport({
+    insights,
+    anomalyResult,
+    modelComparisons,
+    auditReport,
+  });
+
+  const header = `# Insights Report\n\n> ${from} — ${to} · ${sessions.length} sessions\n\n`;
+  const fullMarkdown = markdown ? header + markdown : header + "_No insights for this period._\n";
+  const format = resolveFormat(opts);
+  const output = applyFormat(fullMarkdown, format, sessions);
+  await writeReport(output, globalOpts.output as string | undefined);
+}
+
 // ---------------------------------------------------------------------------
 
 const program = new Command();
@@ -444,6 +708,7 @@ reportCmd
   .option("--llm-model <name>", "LLM model name (required for ollama)")
   .option("--llm-base-url <url>", "LLM API base URL (overrides default)")
   .option("--no-llm", "Disable LLM summarization")
+  .option("--format <fmt>", "Output format: md | html | json | csv (default: md)")
   .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(runWorkDaily);
 
@@ -455,8 +720,185 @@ reportCmd
   .option("--llm-model <name>", "LLM model name (required for ollama)")
   .option("--llm-base-url <url>", "LLM API base URL (overrides default)")
   .option("--no-llm", "Disable LLM summarization")
+  .option("--format <fmt>", "Output format: md | html | json | csv (default: md)")
   .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
   .action(runWorkWeekly);
+
+reportCmd
+  .command("work-monthly")
+  .description("Generate a work-content monthly report (defaults to current month)")
+  .argument("[month]", "Month in YYYY-MM format (e.g. 2026-06)", undefined)
+  .option("--llm <provider>", "LLM provider: anthropic | ollama (default: auto-detect)")
+  .option("--llm-model <name>", "LLM model name (required for ollama)")
+  .option("--llm-base-url <url>", "LLM API base URL (overrides default)")
+  .option("--no-llm", "Disable LLM summarization")
+  .option("--format <fmt>", "Output format: md | html | json | csv (default: md)")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
+  .action(runWorkMonthly);
+
+reportCmd
+  .command("work-quarterly")
+  .description("Generate a work-content quarterly report (defaults to current quarter)")
+  .argument("[quarter]", "Quarter in YYYY-QN format (e.g. 2026-Q2)", undefined)
+  .option("--llm <provider>", "LLM provider: anthropic | ollama (default: auto-detect)")
+  .option("--llm-model <name>", "LLM model name (required for ollama)")
+  .option("--llm-base-url <url>", "LLM API base URL (overrides default)")
+  .option("--no-llm", "Disable LLM summarization")
+  .option("--format <fmt>", "Output format: md | html | json | csv (default: md)")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
+  .action(runWorkQuarterly);
+
+reportCmd
+  .command("insights")
+  .description("Generate an analytics insights report (defaults to last 7 days)")
+  .option("--from <date>", "Start date (YYYY-MM-DD, default: 7 days ago)")
+  .option("--to <date>", "End date (YYYY-MM-DD, default: today)")
+  .option("--format <fmt>", "Output format: md | html | json | csv (default: md)")
+  .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
+  .action(runInsights);
+
+// ---------------------------------------------------------------------------
+// Deep session analysis report handlers
+// ---------------------------------------------------------------------------
+
+async function runSessionReport(
+  sessionId: string,
+  opts: { claudeDir?: string; output?: string },
+): Promise<void> {
+  const claudeDir = resolveClaudeDir({ claudeDir: opts.claudeDir } as OptionValues);
+  const { entries } = await loadSessionEntries(sessionId, claudeDir);
+
+  const phases = detectPhases(entries);
+  const lintFindings = lintSession(entries);
+  const timeline = buildTimeline(entries);
+  const postmortem = analyzePostmortem(entries);
+
+  const markdown = formatSessionReport({
+    phases,
+    lintFindings,
+    timeline,
+    postmortem,
+  });
+  await writeReport(markdown, opts.output);
+}
+
+async function runLintReport(
+  sessionId: string | undefined,
+  opts: { claudeDir?: string; output?: string },
+): Promise<void> {
+  const claudeDir = resolveClaudeDir({ claudeDir: opts.claudeDir } as OptionValues);
+
+  // If no session ID, lint the most recent session
+  let id = sessionId;
+  if (!id) {
+    const summaries = await mergeCostData(
+      await buildSessionSummaries(claudeDir),
+      claudeDir,
+    );
+    if (summaries.length === 0) throw new Error("No sessions found.");
+    const sorted = [...summaries].sort((a, b) =>
+      (b.startTime ?? "").localeCompare(a.startTime ?? ""),
+    );
+    id = sorted[0].sessionId;
+  }
+
+  const { entries } = await loadSessionEntries(id, claudeDir);
+  const findings = lintSession(entries);
+  const markdown = formatLintReport(findings);
+  await writeReport(markdown, opts.output);
+}
+
+async function runStandupReport(
+  sessionId: string | undefined,
+  opts: { claudeDir?: string; output?: string },
+): Promise<void> {
+  const claudeDir = resolveClaudeDir({ claudeDir: opts.claudeDir } as OptionValues);
+
+  let id = sessionId;
+  if (!id) {
+    const summaries = await mergeCostData(
+      await buildSessionSummaries(claudeDir),
+      claudeDir,
+    );
+    if (summaries.length === 0) throw new Error("No sessions found.");
+    const sorted = [...summaries].sort((a, b) =>
+      (b.startTime ?? "").localeCompare(a.startTime ?? ""),
+    );
+    id = sorted[0].sessionId;
+  }
+
+  const { entries } = await loadSessionEntries(id, claudeDir);
+  const report = generateStandup(entries);
+  const markdown = formatStandupReport(report);
+  await writeReport(markdown, opts.output);
+}
+
+async function runDiffReport(
+  idA: string,
+  idB: string,
+  opts: { claudeDir?: string; output?: string },
+): Promise<void> {
+  const claudeDir = resolveClaudeDir({ claudeDir: opts.claudeDir } as OptionValues);
+  const { entries: entriesA } = await loadSessionEntries(idA, claudeDir);
+  const { entries: entriesB } = await loadSessionEntries(idB, claudeDir);
+
+  const diff = diffSessions(entriesA, entriesB);
+  const markdown = formatDiffReport(diff);
+  await writeReport(markdown, opts.output);
+}
+
+// ---------------------------------------------------------------------------
+// Deep session analysis commands
+// ---------------------------------------------------------------------------
+
+reportCmd
+  .command("session")
+  .description("Deep analysis of a single session (phases, lint, timeline, postmortem)")
+  .argument("<sessionId>", "Session ID (supports prefix matching)")
+  .action(async (sessionId: string) => {
+    const globalOpts = program.opts();
+    await runSessionReport(sessionId, {
+      claudeDir: globalOpts.claudeDir,
+      output: globalOpts.output,
+    });
+  });
+
+reportCmd
+  .command("lint")
+  .description("Lint a session for anti-patterns (defaults to most recent)")
+  .argument("[sessionId]", "Session ID (supports prefix matching)")
+  .action(async (sessionId: string | undefined) => {
+    const globalOpts = program.opts();
+    await runLintReport(sessionId, {
+      claudeDir: globalOpts.claudeDir,
+      output: globalOpts.output,
+    });
+  });
+
+reportCmd
+  .command("standup")
+  .description("Generate a standup report from a session (defaults to most recent)")
+  .argument("[sessionId]", "Session ID (supports prefix matching)")
+  .action(async (sessionId: string | undefined) => {
+    const globalOpts = program.opts();
+    await runStandupReport(sessionId, {
+      claudeDir: globalOpts.claudeDir,
+      output: globalOpts.output,
+    });
+  });
+
+reportCmd
+  .command("diff")
+  .description("Compare two sessions side-by-side")
+  .argument("<sessionIdA>", "First session ID (supports prefix matching)")
+  .argument("<sessionIdB>", "Second session ID (supports prefix matching)")
+  .action(async (idA: string, idB: string) => {
+    const globalOpts = program.opts();
+    await runDiffReport(idA, idB, {
+      claudeDir: globalOpts.claudeDir,
+      output: globalOpts.output,
+    });
+  });
 
 // ---------------------------------------------------------------------------
 // Session browsing
@@ -491,11 +933,13 @@ sessionCmd
   .description("Show details for a single session")
   .argument("<sessionId>", "Session ID (supports prefix matching)")
   .option("--tz <timezone>", "IANA timezone (e.g. Asia/Shanghai, UTC)")
-  .action(async (sessionId: string) => {
+  .option("--analysis", "Include deep session analysis (phases, lint, timeline, postmortem)")
+  .action(async (sessionId: string, opts) => {
     const globalOpts = program.opts();
     await runShow(sessionId, {
       claudeDir: globalOpts.claudeDir,
       output: globalOpts.output,
+      analysis: opts.analysis === true,
     });
   });
 

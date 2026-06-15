@@ -1,9 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { join } from "node:path";
 import type { SessionSummary } from "../types/index.js";
-import { handleProjects, handleSessions, handleSessionDetail } from "./api-handlers.js";
+import { handleProjects, handleSessions, handleSessionDetail, handleSessionAnalysis } from "./api-handlers.js";
 import { getHtml } from "./ui.js";
 import { setTimezone } from "../cli/tz-utils.js";
+import { loadSessionEntries } from "../cli/entry-loader.js";
 
 // ---------------------------------------------------------------------------
 // JSON response helper
@@ -115,6 +116,11 @@ function createHandler(summaries: SessionSummary[], claudeDir: string, timezone?
     const qIdx = url.indexOf("?");
     const pathname = qIdx === -1 ? url : url.slice(0, qIdx);
 
+
+    // Security headers — applied to all responses
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
     try {
       // GET / — serve HTML page
       if (pathname === "/" || pathname === "") {
@@ -127,10 +133,33 @@ function createHandler(summaries: SessionSummary[], claudeDir: string, timezone?
         return;
       }
 
+      // GET /favicon.ico — empty response to avoid 404 noise
+      if (pathname === "/favicon.ico") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
       // GET /api/projects
       if (pathname === "/api/projects") {
         const query = parseQuery(url);
         json(res, 200, handleProjects(summaries, query.sort));
+        return;
+      }
+
+      // GET /api/sessions/:id/analysis
+      const analysisMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/analysis$/);
+      if (analysisMatch) {
+        const idPrefix = analysisMatch[1];
+        const result = handleSessionDetail(summaries, idPrefix);
+        if (result.status !== 200) {
+          json(res, result.status, result.data);
+          return;
+        }
+        const session = summaries.find((s) => s.sessionId.startsWith(idPrefix))!;
+        const { entries } = await loadSessionEntries(session.sessionId, claudeDir);
+        const analysis = handleSessionAnalysis(entries);
+        json(res, 200, analysis);
         return;
       }
 

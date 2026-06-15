@@ -4,9 +4,10 @@ import { getPricing, estimateCost } from "./pricing.js";
 /**
  * Extract and sum cost data from assistant entries in a session.
  *
- * Primary path: read `costUSD` from top-level field (Anthropic models).
- * Fallback path: read `message.usage` token counts and estimate cost
- * using the model pricing table.
+ * Always reads `message.usage` token counts from every assistant entry.
+ * Cost is resolved in priority order:
+ *   1. Top-level `costUSD` field (direct from API)
+ *   2. Estimated from token counts using the pricing table (fallback)
  */
 export function extractCostData(entries: JsonlEntry[]): CostInfo {
   let totalUSD = 0;
@@ -36,10 +37,9 @@ export function extractCostData(entries: JsonlEntry[]): CostInfo {
     if (typeof entry.costUSD === "number") {
       totalUSD += entry.costUSD;
       assistantWithCost++;
-      continue;
     }
 
-    // Fallback: message.usage tokens
+    // Always extract message.usage tokens (even when costUSD is present)
     const usage = (entry.message as Record<string, unknown> | undefined)
       ?.usage as Record<string, unknown> | undefined;
 
@@ -56,7 +56,11 @@ export function extractCostData(entries: JsonlEntry[]): CostInfo {
       inputTokens += inTok;
       outputTokens += outTok;
       cacheReadTokens += cacheTok;
-      isEstimated = true;
+
+      // Mark as estimated only when no costUSD exists for this entry
+      if (typeof entry.costUSD !== "number") {
+        isEstimated = true;
+      }
     }
   }
 

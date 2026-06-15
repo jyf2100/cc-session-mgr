@@ -11,11 +11,23 @@ import {
   aggregateWorkByWeek,
   aggregateWorkByProject,
 } from "../aggregator/work-by-week.js";
-import { summarizeSessions, summarizeProjectWeekly } from "../summarize/index.js";
+import {
+  aggregateWorkByRange,
+  buildMonthlyReportData,
+  buildQuarterlyReportData,
+} from "../aggregator/work-by-range.js";
+import {
+  summarizeSessions,
+  summarizeProjectWeekly,
+  summarizeProjectMonthly,
+  summarizeProjectQuarterly,
+} from "../summarize/index.js";
 import type { SummarizeOptions } from "../summarize/index.js";
 import type { DayIndexedWorkSession, SessionWorkSummary } from "../types/index.js";
 import { generateWorkDailyReport } from "./work-daily.js";
 import { generateWorkWeeklyReport } from "./work-weekly.js";
+import { generateWorkMonthlyReport } from "./work-monthly.js";
+import { generateWorkQuarterlyReport } from "./work-quarterly.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -29,6 +41,8 @@ export interface PipelineOptions {
 
 export interface PipelineResult {
   markdown: string;
+  /** Sessions used to generate the report, available for CSV/JSON export. */
+  sessions?: SessionWorkSummary[];
 }
 
 // ---------------------------------------------------------------------------
@@ -91,7 +105,7 @@ export async function buildWorkDailyMarkdown(
   }
 
   const markdown = generateWorkDailyReport(data);
-  return { markdown };
+  return { markdown, sessions: reportSessions };
 }
 
 // ---------------------------------------------------------------------------
@@ -150,5 +164,127 @@ export async function buildWorkWeeklyMarkdown(
   }
 
   const markdown = generateWorkWeeklyReport(projectData);
-  return { markdown };
+  return { markdown, sessions: reportSessions };
+}
+
+// ---------------------------------------------------------------------------
+// Monthly report pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a work-monthly report markdown string.
+ *
+ * Pipeline: range-filtered aggregation → LLM session summarization →
+ * per-project LLM summarization → markdown generation.
+ * Returns `null` when no sessions exist for the target month.
+ */
+export async function buildWorkMonthlyMarkdown(
+  indexed: DayIndexedWorkSession[],
+  year: number,
+  month: number,
+  options?: PipelineOptions,
+): Promise<PipelineResult | null> {
+  const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+  // Compute last day of month
+  const lastDay = new Date(year, month, 0).getDate();
+  const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+  const projects = aggregateWorkByRange(
+    indexed,
+    { start: startDate, end: endDate },
+    "weekly",
+  );
+
+  if (!projects) {
+    return null;
+  }
+
+  // Summarize all sessions across all projects
+  const allSessions = projects.flatMap((p) => p.sessions);
+  await runSummarize(
+    allSessions,
+    options?.summarizeOptions,
+    options?.claudeDir,
+    options?.onProgress,
+  );
+
+  // Per-project LLM summarization
+  if (options?.summarizeOptions) {
+    for (const project of projects) {
+      if (project.sessions.length === 0) continue;
+      options.onProgress?.(
+        `Project monthly summary: ${shortName(project.projectName)} (${project.sessions.length} sessions)...`,
+      );
+      project.projectSummary = await summarizeProjectMonthly(
+        project.projectName,
+        project.sessions,
+        options.summarizeOptions,
+      );
+    }
+  }
+
+  const reportData = buildMonthlyReportData(year, month, projects);
+  const markdown = generateWorkMonthlyReport(reportData);
+  return { markdown, sessions: allSessions };
+}
+
+// ---------------------------------------------------------------------------
+// Quarterly report pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a work-quarterly report markdown string.
+ *
+ * Pipeline: range-filtered aggregation → LLM session summarization →
+ * per-project LLM summarization → markdown generation.
+ * Returns `null` when no sessions exist for the target quarter.
+ */
+export async function buildWorkQuarterlyMarkdown(
+  indexed: DayIndexedWorkSession[],
+  year: number,
+  quarter: number,
+  options?: PipelineOptions,
+): Promise<PipelineResult | null> {
+  const startMonth = (quarter - 1) * 3 + 1;
+  const startDate = `${year}-${String(startMonth).padStart(2, "0")}-01`;
+  const lastDay = new Date(year, startMonth + 2, 0).getDate();
+  const endDate = `${year}-${String(startMonth + 2).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+  const projects = aggregateWorkByRange(
+    indexed,
+    { start: startDate, end: endDate },
+    "monthly",
+  );
+
+  if (!projects) {
+    return null;
+  }
+
+  // Summarize all sessions across all projects
+  const allSessions = projects.flatMap((p) => p.sessions);
+  await runSummarize(
+    allSessions,
+    options?.summarizeOptions,
+    options?.claudeDir,
+    options?.onProgress,
+  );
+
+  // Per-project LLM summarization
+  if (options?.summarizeOptions) {
+    for (const project of projects) {
+      if (project.sessions.length === 0) continue;
+      options.onProgress?.(
+        `Project quarterly summary: ${shortName(project.projectName)} (${project.sessions.length} sessions)...`,
+      );
+      project.projectSummary = await summarizeProjectQuarterly(
+        project.projectName,
+        project.sessions,
+        options.summarizeOptions,
+      );
+    }
+  }
+
+  const reportData = buildQuarterlyReportData(year, quarter, projects);
+  const markdown = generateWorkQuarterlyReport(reportData);
+  return { markdown, sessions: allSessions };
 }

@@ -2,8 +2,11 @@ import type { WorkDailyData, SessionWorkSummary } from "../types/index.js";
 
 /**
  * Generate a Markdown daily work report describing what was accomplished.
+ *
+ * @param data - The work daily data to render.
+ * @param insightsMarkdown - Optional pre-rendered insights section to append.
  */
-export function generateWorkDailyReport(data: WorkDailyData): string {
+export function generateWorkDailyReport(data: WorkDailyData, insightsMarkdown?: string): string {
   if (data.sessionCount === 0) {
     return `# 工作日报: ${data.date}\n\nNo work sessions found for ${data.date}.\n`;
   }
@@ -24,6 +27,10 @@ export function generateWorkDailyReport(data: WorkDailyData): string {
     }
 
     lines.push("");
+  }
+
+  if (insightsMarkdown) {
+    lines.push(insightsMarkdown);
   }
 
   return lines.join("\n");
