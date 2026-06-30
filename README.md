@@ -130,6 +130,44 @@ session-mgr session list
 session-mgr session show <session-id>
 ```
 
+### 会话挖掘(mine)
+
+从会话历史挖掘可复用经验、踩坑、工具链模式,产出按项目归档的 lessons(Markdown + frontmatter)。两阶段架构:确定性 digest/triage 先筛 → LLM 对 deep-dive 会话提取 lessons。
+
+```bash
+# 挖掘当前项目(默认 cwd)
+session-mgr mine
+
+# 预览 triage 分流(不调 LLM、不产出)
+session-mgr mine --dry-run
+
+# 指定项目 + 时间范围
+session-mgr mine myapp --from 2026-06-01 --to 2026-06-30
+
+# 带 LLM 提取 lessons(便宜模型提取)
+session-mgr mine --llm anthropic
+
+# 全量(先打印成本预估)
+session-mgr mine --all-projects --llm anthropic
+
+# 禁用 LLM,仅确定性 digest/triage/信号(免费)
+session-mgr mine --no-llm
+```
+
+**产物**(默认 `./mined/lessons/`):
+- `<projectName>/<id>.md` — 按项目分目录,**只为有产出的项目建目录**
+- `INDEX.md` — 项目总览(按 `条目数 × confidence` 排序)
+
+**成本与缓存**:
+- 两阶段:确定性 digest/triage 先筛(免费),LLM 只对 deep-dive 提取 lessons
+- 成本分层:便宜模型(Haiku)提取、强模型(Sonnet)综合;`--no-llm` 完全免费
+- digest 缓存:`<output>/.mining-cache.json`,二次挖掘复用(不重复精读)
+- triage 规则:≥3 人类轮次 或 ≥50 自主轮次 才 deep-dive(`--min-turns` 可调)
+
+**LLM 模型选择**:thinking 模型(`qwen3`、`deepseek-r1`)会因思考链占满 token 配额导致空输出。`mine` 已自动尝试禁思考(`chat_template_kwargs.think=false`)+ 提升 `max_tokens`,但部分 ollama 版本不透传该参数。**推荐非 thinking 模型**(如 `gemma4:12b`、`gpt-oss:120b`)。
+
+**安全**:严格只读 `~/.claude`;产物只写 `--output`,绝不修改 CLAUDE.md 或源数据。
+
 ## 全局选项
 
 | 选项 | 说明 |

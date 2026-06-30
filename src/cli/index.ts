@@ -47,6 +47,8 @@ import {
   formatDiffReport,
 } from "../report/session-report.js";
 import { loadSessionEntries } from "./entry-loader.js";
+import { runMineAndWrite } from "../mining/run.js";
+import type { MineConfig } from "../mining/types.js";
 import type {
   DailyReportData,
   WeeklyReportData,
@@ -993,6 +995,73 @@ program
       reportDir: opts.reportDir as string | undefined,
       summarizeOptions,
     });
+  });
+
+// ---------------------------------------------------------------------------
+// Mining(会话挖掘 agent —— session-mining-agent)
+// ---------------------------------------------------------------------------
+
+program
+  .command("mine")
+  .description("Mine lessons/signals from session history")
+  .argument("[project]", "Project filter (substring); default = current cwd project")
+  .option("--from <date>", "Start date YYYY-MM-DD")
+  .option("--to <date>", "End date YYYY-MM-DD")
+  .option("--output <dir>", "Output directory (default: ./mined)")
+  .option("--min-turns <n>", "Triage threshold (human turns)", "3")
+  .option("--dry-run", "Show triage split only, no LLM, no output")
+  .option("--all-projects", "Mine all projects (prints cost warning)")
+  .option("--interactive", "Interactive per-lesson approval")
+  .option("--llm <provider>", "LLM provider: anthropic | ollama")
+  .option("--llm-model <name>", "LLM model name (required for ollama)")
+  .option("--llm-base-url <url>", "LLM API base URL")
+  .option("--no-llm", "Disable LLM (deterministic digest/triage only)")
+  .action(async (project: string | undefined, opts) => {
+    const globalOpts = program.opts();
+    const claudeDir = resolveClaudeDir(globalOpts);
+    const dateStr = todayStr();
+    const llm = await resolveSummarizeOptions({
+      llm: opts.llm as string | undefined,
+      llmModel: opts.llmModel as string | undefined,
+      llmBaseUrl: opts.llmBaseUrl as string | undefined,
+      noLlm: opts.noLlm as boolean | undefined,
+    });
+    const outputDir =
+      (opts.output as string | undefined) ??
+      (globalOpts.output as string | undefined) ??
+      join(process.cwd(), "mined");
+    const minTurns = parseInt(opts.minTurns as string, 10) || 3;
+    const dateRange =
+      opts.from && opts.to
+        ? { start: opts.from as string, end: opts.to as string }
+        : undefined;
+
+    if (opts.allProjects) {
+      const all = await buildWorkSummaries(claudeDir);
+      process.stderr.write(
+        `⚠️ --all-projects: 约 ${all.length} 个会话,可能产生 LLM 成本\n`,
+      );
+    }
+
+    const config: MineConfig = {
+      claudeDir,
+      outputDir,
+      projectFilter: project,
+      allProjects: opts.allProjects === true,
+      dateRange,
+      minTurns,
+      dryRun: opts.dryRun === true,
+      interactive: opts.interactive === true,
+      llm,
+    };
+    const result = await runMineAndWrite(config, dateStr);
+    process.stdout.write(result.triageView + "\n");
+    if (!config.dryRun && result.written > 0) {
+      process.stdout.write(
+        `\n✓ 写入 ${result.written} 条到 ${outputDir}/lessons/(项目: ${result.projects.join(", ")})\n` +
+          `  INDEX: ${outputDir}/lessons/INDEX.md\n`,
+      );
+    }
   });
 
 // Apply timezone before any action handler runs.
