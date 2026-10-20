@@ -1,6 +1,11 @@
 /**
  * Inline HTML/CSS/JS for the session browser SPA.
  * No frameworks, no build tools — just a single HTML string.
+ *
+ * TODO(theme): this panel ships a self-contained dark CSS design that is
+ * fully independent of the terminal TUI color system in `src/tui/theme.ts`.
+ * Wiring it into the same SESSION_MGR_THEME mechanism (light variant) is
+ * deferred — see the tui-light-theme PR description.
  */
 export function getHtml(timezone?: string): string {
   return `<!DOCTYPE html>

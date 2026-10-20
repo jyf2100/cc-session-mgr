@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { useTuiStore, type ViewId } from "../store.js";
+import { getActiveTheme } from "../theme.js";
 
 const VIEW_LABELS: Record<ViewId, string> = {
   dashboard: "Dashboard",
@@ -20,6 +21,7 @@ const VIEW_KEYS: Record<ViewId, string> = {
 
 export function Header(): React.ReactElement {
   const view = useTuiStore((s) => s.view);
+  const theme = getActiveTheme();
 
   return React.createElement(
     Box,
@@ -28,13 +30,17 @@ export function Header(): React.ReactElement {
       justifyContent: "space-between",
       paddingX: 1,
       borderBottom: true,
-      borderColor: "gray",
+      borderColor: theme.border,
     },
     React.createElement(
       Box,
       null,
-      React.createElement(Text, { bold: true, color: "cyan" }, "cc-session-mgr"),
-      React.createElement(Text, { dimColor: true }, " │ "),
+      React.createElement(
+        Text,
+        { bold: true, color: theme.accent },
+        "cc-session-mgr",
+      ),
+      React.createElement(Text, { ...theme.dim }, " │ "),
       React.createElement(Text, { bold: true }, VIEW_LABELS[view]),
     ),
     React.createElement(
@@ -46,14 +52,17 @@ export function Header(): React.ReactElement {
             Text,
             {
               key: `${v}-key`,
-              color: view === v ? "green" : "gray",
+              color: view === v ? theme.primary : theme.muted,
               bold: view === v,
             },
             VIEW_KEYS[v],
           ),
           React.createElement(
             Text,
-            { key: `${v}-label`, color: view === v ? "white" : "gray" },
+            {
+              key: `${v}-label`,
+              color: view === v ? theme.text : theme.muted,
+            },
             `:${VIEW_LABELS[v]} `,
           ),
         ],

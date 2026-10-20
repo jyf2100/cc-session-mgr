@@ -2,6 +2,7 @@ import React from "react";
 import { render } from "ink";
 import { App } from "./App.js";
 import { useTuiStore } from "./store.js";
+import { initThemeFromEnv } from "./theme.js";
 import { buildDayIndexedWorkSummaries } from "../aggregator/build-day-indexed-work.js";
 import type { SummarizeOptions } from "../summarize/summarize.js";
 
@@ -19,6 +20,9 @@ export async function startTui(
   claudeDir: string,
   options?: TuiOptions,
 ): Promise<void> {
+  // Pick dark/light theme (SESSION_MGR_THEME) before anything renders.
+  initThemeFromEnv();
+
   const store = useTuiStore.getState();
 
   store.setClaudeDir(claudeDir);
