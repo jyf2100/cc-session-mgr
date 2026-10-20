@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useTuiStore } from "../store.js";
+import { getActiveTheme } from "../theme.js";
 import { formatCost, formatTokenCount } from "../../report/format.js";
 
 const SEP = "────────────────────────────────────────";
@@ -33,15 +34,20 @@ export function SessionDetail(): React.ReactElement {
   const indexed = useTuiStore((s) => s.indexed);
   const filterActive = useTuiStore((s) => s.filterActive);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const theme = getActiveTheme();
 
   if (!selectedSessionId) {
     return React.createElement(
       Box,
       { padding: 1, flexDirection: "column" },
-      React.createElement(Text, { color: "yellow" }, "No session selected."),
       React.createElement(
         Text,
-        { dimColor: true },
+        { color: theme.warning },
+        "No session selected.",
+      ),
+      React.createElement(
+        Text,
+        { ...theme.dim },
         'Press "4" to browse sessions, then Enter to view detail.',
       ),
     );
@@ -57,10 +63,14 @@ export function SessionDetail(): React.ReactElement {
       { padding: 1, flexDirection: "column" },
       React.createElement(
         Text,
-        { color: "red" },
+        { color: theme.error },
         `Session not found: ${selectedSessionId.slice(0, 12)}`,
       ),
-      React.createElement(Text, { color: "yellow" }, "Press Esc to go back."),
+      React.createElement(
+        Text,
+        { color: theme.warning },
+        "Press Esc to go back.",
+      ),
     );
   }
 
@@ -71,14 +81,14 @@ export function SessionDetail(): React.ReactElement {
   const allLines: ContentLine[] = useMemo(() => {
     const lines: ContentLine[] = [];
 
-    lines.push(ln(SEP, { color: "gray" }));
+    lines.push(ln(SEP, { color: theme.muted }));
     lines.push(
       ln(s.customTitle ?? `Session ${s.sessionId.slice(0, 12)}`, {
         bold: true,
-        color: "green",
+        color: theme.primary,
       }),
     );
-    lines.push(ln(SEP, { color: "gray" }));
+    lines.push(ln(SEP, { color: theme.muted }));
 
     lines.push(ln(`ID:       ${s.sessionId}`, { dim: true }));
     lines.push(ln(`Project:  ${s.projectPath}`, { bold: true }));
@@ -86,11 +96,13 @@ export function SessionDetail(): React.ReactElement {
     lines.push(
       ln(
         `Cost:     ${formatCost(s.cost.totalUSD)}${s.cost.isEstimated ? " (estimated)" : ""} │ In: ${formatTokenCount(s.cost.inputTokens)} │ Out: ${formatTokenCount(s.cost.outputTokens)}`,
-        { color: "cyan" },
+        { color: theme.info },
       ),
     );
     lines.push(
-      ln(`Models:   ${s.models.join(", ") || "unknown"}`, { color: "magenta" }),
+      ln(`Models:   ${s.models.join(", ") || "unknown"}`, {
+        color: theme.secondary,
+      }),
     );
     lines.push(
       ln(
@@ -100,14 +112,14 @@ export function SessionDetail(): React.ReactElement {
 
     // LLM Summary (from summarizer, higher quality than compactedSummary)
     if (wc?.llmSummary) {
-      lines.push(ln(SEP, { color: "gray" }));
-      lines.push(ln("LLM Summary", { bold: true, color: "yellow" }));
+      lines.push(ln(SEP, { color: theme.muted }));
+      lines.push(ln("LLM Summary", { bold: true, color: theme.warning }));
       lines.push(ln(`  ${wc.llmSummary}`));
     }
 
     if (wc) {
-      lines.push(ln(SEP, { color: "gray" }));
-      lines.push(ln("Work Summary", { bold: true, color: "yellow" }));
+      lines.push(ln(SEP, { color: theme.muted }));
+      lines.push(ln("Work Summary", { bold: true, color: theme.warning }));
 
       if (wc.primaryIntent) {
         lines.push(ln(`  Intent: ${wc.primaryIntent}`, { bold: true }));
@@ -137,8 +149,8 @@ export function SessionDetail(): React.ReactElement {
     }
 
     if (s.fileEdits.length > 0) {
-      lines.push(ln(SEP, { color: "gray" }));
-      lines.push(ln("File Edits", { bold: true, color: "yellow" }));
+      lines.push(ln(SEP, { color: theme.muted }));
+      lines.push(ln("File Edits", { bold: true, color: theme.warning }));
       for (const f of s.fileEdits.slice(0, 15)) {
         lines.push(ln(`  ${f.filePath} (${f.editCount})`));
       }
@@ -148,21 +160,21 @@ export function SessionDetail(): React.ReactElement {
     }
 
     if (item.daySlices.length > 0) {
-      lines.push(ln(SEP, { color: "gray" }));
-      lines.push(ln("Activity by Day", { bold: true, color: "yellow" }));
+      lines.push(ln(SEP, { color: theme.muted }));
+      lines.push(ln("Activity by Day", { bold: true, color: theme.warning }));
       for (const d of item.daySlices) {
         const msgs = d.messageCounts.user + d.messageCounts.assistant;
         lines.push(ln(`  ${d.date} │ ${msgs} msgs │ ${formatCost(d.cost)}`));
       }
     }
 
-    lines.push(ln(SEP, { color: "gray" }));
+    lines.push(ln(SEP, { color: theme.muted }));
     lines.push(
-      ln("Esc: back  ↑↓/jk: scroll  ^U/^D: page", { color: "yellow" }),
+      ln("Esc: back  ↑↓/jk: scroll  ^U/^D: page", { color: theme.warning }),
     );
 
     return lines;
-  }, [s, wc, item.daySlices]);
+  }, [s, wc, item.daySlices, theme]);
 
   // Viewport
   const maxVisible = Math.max(3, (stdout?.rows ?? 24) - OVERHEAD_LINES);
@@ -202,7 +214,7 @@ export function SessionDetail(): React.ReactElement {
     hasUp &&
       React.createElement(
         Text,
-        { color: "yellow", dimColor: true },
+        { ...theme.dimWarning },
         `  ↑ ${clampedOffset} lines above...`,
       ),
     ...visibleLines.map((l, i) =>
@@ -211,8 +223,8 @@ export function SessionDetail(): React.ReactElement {
         {
           key: clampedOffset + i,
           ...(l.color ? { color: l.color } : {}),
+          ...(l.dim ? theme.dim : {}),
           ...(l.bold ? { bold: true } : {}),
-          ...(l.dim ? { dimColor: true } : {}),
         },
         l.text,
       ),
@@ -220,7 +232,7 @@ export function SessionDetail(): React.ReactElement {
     hasDown &&
       React.createElement(
         Text,
-        { color: "yellow", dimColor: true },
+        { ...theme.dimWarning },
         `  ↓ ${allLines.length - clampedOffset - maxVisible} lines below...`,
       ),
   );

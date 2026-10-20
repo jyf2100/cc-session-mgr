@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { useTuiStore } from "../store.js";
+import { getActiveTheme } from "../theme.js";
 import { aggregateWorkByDate } from "../../aggregator/work-by-date.js";
 import { formatCost, formatTokenCount } from "../../report/format.js";
 
@@ -9,6 +10,7 @@ import { formatCost, formatTokenCount } from "../../report/format.js";
  */
 export function Dashboard(): React.ReactElement {
   const indexed = useTuiStore((s) => s.indexed);
+  const theme = getActiveTheme();
 
   // Aggregate all days
   const allDays = aggregateWorkByDate(indexed);
@@ -21,7 +23,7 @@ export function Dashboard(): React.ReactElement {
       { padding: 1 },
       React.createElement(
         Text,
-        { dimColor: true },
+        { ...theme.dim },
         "No session data found. Run some Claude Code sessions first!",
       ),
     );
@@ -88,7 +90,7 @@ export function Dashboard(): React.ReactElement {
       { flexDirection: "column", marginBottom: 1 },
       React.createElement(
         Text,
-        { bold: true, color: "green" },
+        { bold: true, color: theme.primary },
         `Today: ${today?.date ?? "N/A"}`,
       ),
       today &&

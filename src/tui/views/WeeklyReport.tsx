@@ -1,6 +1,7 @@
 import React, { useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import { useTuiStore } from "../store.js";
+import { getActiveTheme } from "../theme.js";
 import { aggregateWorkByDate } from "../../aggregator/work-by-date.js";
 import {
   aggregateWorkByWeek,
@@ -29,6 +30,7 @@ export function WeeklyReport(): React.ReactElement {
   const setExporting = useTuiStore((s) => s.setExporting);
   const setExportStatus = useTuiStore((s) => s.setExportStatus);
   const [exportMsg, setExportMsg] = React.useState<string | null>(null);
+  const theme = getActiveTheme();
 
   const weekLabel = `${weeklyYear}-W${String(weeklyWeek).padStart(2, "0")}`;
 
@@ -81,7 +83,7 @@ export function WeeklyReport(): React.ReactElement {
       ),
       React.createElement(
         Text,
-        { dimColor: true },
+        { ...theme.dim },
         "No sessions this week. Use ←/→ to navigate.",
       ),
     );
@@ -142,7 +144,7 @@ export function WeeklyReport(): React.ReactElement {
     // Week header + summary
     React.createElement(
       Text,
-      { bold: true, color: "green" },
+      { bold: true, color: theme.primary },
       `Weekly Report: ${weekLabel}`,
     ),
     React.createElement(
@@ -152,7 +154,7 @@ export function WeeklyReport(): React.ReactElement {
     ),
     React.createElement(
       Text,
-      { dimColor: true },
+      { ...theme.dim },
       `Tokens: ${formatTokenCount(totalInputTokens)} in / ${formatTokenCount(totalOutputTokens)} out`,
     ),
 
@@ -211,7 +213,7 @@ export function WeeklyReport(): React.ReactElement {
         proj.projectSummary &&
           React.createElement(
             Text,
-            { dimColor: true },
+            { ...theme.dim },
             `  ${proj.projectSummary}`,
           ),
         ...proj.sessions.map((ses, j) => {
@@ -233,13 +235,13 @@ export function WeeklyReport(): React.ReactElement {
             intent &&
               React.createElement(
                 Text,
-                { dimColor: true },
+                { ...theme.dim },
                 `    ${intent.slice(0, 80)}${intent.length > 80 ? "..." : ""}`,
               ),
             fileCount > 0 &&
               React.createElement(
                 Text,
-                { dimColor: true },
+                { ...theme.dim },
                 `    ${fileCount} files edited`,
               ),
           );
@@ -249,12 +251,12 @@ export function WeeklyReport(): React.ReactElement {
 
     // Export message or hint
     exporting
-      ? React.createElement(Text, { color: "yellow" }, exportStatus ?? "Exporting...")
+      ? React.createElement(Text, { color: theme.warning }, exportStatus ?? "Exporting...")
       : exportMsg
-        ? React.createElement(Text, { color: "green" }, exportMsg)
+        ? React.createElement(Text, { color: theme.success }, exportMsg)
         : React.createElement(
             Text,
-            { dimColor: true },
+            { ...theme.dim },
             summarizeOptions
               ? "←/→: change week  e: export markdown (with LLM summary)"
               : "←/→: change week  e: export markdown (no LLM — use --llm to enable)",

@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useTuiStore } from "../store.js";
+import { getActiveTheme } from "../theme.js";
 import { formatCost } from "../../report/format.js";
 
 // Overhead: Header (~2 lines) + StatusBar (1 line) + title (1 line) + margins
@@ -20,6 +21,7 @@ export function SessionList(): React.ReactElement {
   const filter = useTuiStore((s) => s.filter);
   const setFilter = useTuiStore((s) => s.setFilter);
   const setFilterActive = useTuiStore((s) => s.setFilterActive);
+  const theme = getActiveTheme();
 
   // Filter sessions
   const filtered = useMemo(() => {
@@ -111,7 +113,7 @@ export function SessionList(): React.ReactElement {
       ),
       React.createElement(
         Text,
-        { dimColor: true },
+        { ...theme.dim },
         filter ? "No sessions match filter." : "No sessions loaded.",
       ),
     );
@@ -135,14 +137,14 @@ export function SessionList(): React.ReactElement {
         { bold: true },
         `Sessions (${sorted.length}${filter ? `, filter: "${filter}"` : ""})`,
       ),
-      React.createElement(Text, { dimColor: true }, "  ↑↓ navigate  Enter open  / filter  PgUp/PgDn"),
+      React.createElement(Text, { ...theme.dim }, "  ↑↓ navigate  Enter open  / filter  PgUp/PgDn"),
     ),
 
     // Scroll-up indicator
     hasUp &&
       React.createElement(
         Text,
-        { color: "yellow", dimColor: true },
+        { ...theme.dimWarning },
         `  ↑ ${viewportStart} more above...`,
       ),
 
@@ -168,7 +170,7 @@ export function SessionList(): React.ReactElement {
 
       return React.createElement(
         Text,
-        { key: sum.sessionId, dimColor: true },
+        { key: sum.sessionId, ...theme.dim },
         `   ${line}`,
       );
     }),
@@ -177,7 +179,7 @@ export function SessionList(): React.ReactElement {
     hasDown &&
       React.createElement(
         Text,
-        { color: "yellow", dimColor: true },
+        { ...theme.dimWarning },
         `  ↓ ${sorted.length - viewportEnd} more below...`,
       ),
   );

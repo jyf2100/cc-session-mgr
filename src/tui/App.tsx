@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text, useApp } from "ink";
 import { useTuiStore } from "./store.js";
 import { useNavigation } from "./hooks/useNavigation.js";
+import { getActiveTheme } from "./theme.js";
 import { Header } from "./components/Header.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Dashboard } from "./views/Dashboard.js";
@@ -15,6 +16,7 @@ export function App(): React.ReactElement {
   const loading = useTuiStore((s) => s.loading);
   const error = useTuiStore((s) => s.error);
   const { exit } = useApp();
+  const theme = getActiveTheme();
 
   useNavigation(exit);
 
@@ -22,7 +24,11 @@ export function App(): React.ReactElement {
     return React.createElement(
       Box,
       { padding: 1 },
-      React.createElement(Text, { color: "yellow" }, "Loading session data..."),
+      React.createElement(
+        Text,
+        { color: theme.warning },
+        "Loading session data...",
+      ),
     );
   }
 
@@ -30,8 +36,13 @@ export function App(): React.ReactElement {
     return React.createElement(
       Box,
       { padding: 1, flexDirection: "column" },
-      React.createElement(Text, { color: "red", bold: true }, "Error: ", error),
-      React.createElement(Text, { dimColor: true }, "Press q to exit."),
+      React.createElement(
+        Text,
+        { color: theme.error, bold: true },
+        "Error: ",
+        error,
+      ),
+      React.createElement(Text, { ...theme.dim }, "Press q to exit."),
     );
   }
 

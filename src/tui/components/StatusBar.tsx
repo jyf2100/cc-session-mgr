@@ -1,12 +1,14 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { useTuiStore } from "../store.js";
+import { getActiveTheme } from "../theme.js";
 
 export function StatusBar(): React.ReactElement {
   const view = useTuiStore((s) => s.view);
   const filterActive = useTuiStore((s) => s.filterActive);
   const filter = useTuiStore((s) => s.filter);
   const indexed = useTuiStore((s) => s.indexed);
+  const theme = getActiveTheme();
 
   const sessionCount = indexed.length;
   const left = `${sessionCount} sessions loaded`;
@@ -27,19 +29,19 @@ export function StatusBar(): React.ReactElement {
       justifyContent: "space-between",
       paddingX: 1,
       borderTop: true,
-      borderColor: "gray",
+      borderColor: theme.border,
     },
     React.createElement(
       Box,
       null,
-      React.createElement(Text, { dimColor: true }, left),
+      React.createElement(Text, { ...theme.dim }, left),
       filterActive &&
         React.createElement(
           Text,
-          { color: "yellow" },
+          { color: theme.warning },
           ` │ filter: ${filter}█`,
         ),
     ),
-    React.createElement(Text, { dimColor: true }, right),
+    React.createElement(Text, { ...theme.dim }, right),
   );
 }

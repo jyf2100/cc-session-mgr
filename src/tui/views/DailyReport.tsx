@@ -1,6 +1,7 @@
 import React, { useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import { useTuiStore } from "../store.js";
+import { getActiveTheme } from "../theme.js";
 import { aggregateWorkByDate } from "../../aggregator/work-by-date.js";
 import { formatCost, formatTokenCount } from "../../report/format.js";
 import { buildWorkDailyMarkdown } from "../../report/pipeline.js";
@@ -24,6 +25,7 @@ export function DailyReport(): React.ReactElement {
   const setExporting = useTuiStore((s) => s.setExporting);
   const setExportStatus = useTuiStore((s) => s.setExportStatus);
   const [exportMsg, setExportMsg] = React.useState<string | null>(null);
+  const theme = getActiveTheme();
 
   const handleExport = useCallback(async () => {
     setExporting(true);
@@ -72,7 +74,7 @@ export function DailyReport(): React.ReactElement {
       ),
       React.createElement(
         Text,
-        { dimColor: true },
+        { ...theme.dim },
         "No sessions on this date. Use ←/→ to navigate.",
       ),
     );
@@ -119,7 +121,7 @@ export function DailyReport(): React.ReactElement {
     // Date header
     React.createElement(
       Text,
-      { bold: true, color: "green" },
+      { bold: true, color: theme.primary },
       `Daily Report: ${dailyDate}`,
     ),
 
@@ -131,7 +133,7 @@ export function DailyReport(): React.ReactElement {
     ),
     React.createElement(
       Text,
-      { dimColor: true },
+      { ...theme.dim },
       `Tokens: ${formatTokenCount(totalInputTokens)} in / ${formatTokenCount(totalOutputTokens)} out`,
     ),
 
@@ -161,7 +163,7 @@ export function DailyReport(): React.ReactElement {
         ),
         React.createElement(
           Text,
-          { dimColor: true },
+          { ...theme.dim },
           `  ${proj.sessions.length} sessions │ ${projMsgs} messages │ ${formatCost(projCost)}`,
         ),
         ...proj.sessions.map((ses, j) => {
@@ -184,19 +186,19 @@ export function DailyReport(): React.ReactElement {
             intent &&
               React.createElement(
                 Text,
-                { dimColor: true },
+                { ...theme.dim },
                 `    ${intent.slice(0, 80)}${intent.length > 80 ? "..." : ""}`,
               ),
             modules && modules.length > 0 &&
               React.createElement(
                 Text,
-                { dimColor: true },
+                { ...theme.dim },
                 `    modules: ${modules.slice(0, 3).join(", ")}${modules.length > 3 ? " ..." : ""}`,
               ),
             fileCount > 0 &&
               React.createElement(
                 Text,
-                { dimColor: true },
+                { ...theme.dim },
                 `    ${fileCount} files edited`,
               ),
           );
@@ -206,12 +208,12 @@ export function DailyReport(): React.ReactElement {
 
     // Export message or hint
     exporting
-      ? React.createElement(Text, { color: "yellow" }, exportStatus ?? "Exporting...")
+      ? React.createElement(Text, { color: theme.warning }, exportStatus ?? "Exporting...")
       : exportMsg
-        ? React.createElement(Text, { color: "green" }, exportMsg)
+        ? React.createElement(Text, { color: theme.success }, exportMsg)
         : React.createElement(
             Text,
-            { dimColor: true },
+            { ...theme.dim },
             summarizeOptions
               ? "←/→: change date  e: export markdown (with LLM summary)"
               : "←/→: change date  e: export markdown (no LLM — use --llm to enable)",
